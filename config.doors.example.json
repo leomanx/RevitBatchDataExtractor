@@ -1,0 +1,15 @@
+{
+  "models": [],
+  "outputDirectory": "output",
+  "categories": ["OST_Doors"],
+  "parameters": ["builtin:ALL_MODEL_MARK", "builtin:ALL_MODEL_TYPE_MARK", "builtin:ALL_MODEL_INSTANCE_COMMENTS", "Fire Rating"],
+  "includeTypes": false,
+  "filters": [
+    {"parameter": "Fire Rating", "scope": "type", "operator": "contains", "value": "60", "valueSource": "display", "caseSensitive": false}
+  ],
+  "filterMode": "all",
+  "exportCsv": true,
+  "exportSqlite": true,
+  "csvSafeForExcel": true,
+  "enableDashboard": true
+}

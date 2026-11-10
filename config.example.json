@@ -1,0 +1,13 @@
+{
+  "models": [],
+  "outputDirectory": "output",
+  "categories": [],
+  "parameters": [],
+  "includeTypes": true,
+  "filters": [],
+  "filterMode": "all",
+  "exportCsv": true,
+  "exportSqlite": true,
+  "csvSafeForExcel": true,
+  "enableDashboard": true
+}

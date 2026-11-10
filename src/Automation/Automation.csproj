@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Headless entry point for APS Automation API (Design Automation for Revit 2026). -->
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable>
+    <AssemblyName>RBDE.Automation</AssemblyName><RootNamespace>RevitBatchDataExtractor.Automation</RootNamespace>
+    <PlatformTarget>x64</PlatformTarget>
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+    <RevitPath Condition="'$(RevitPath)'==''">C:\Program Files\Autodesk\Revit 2026</RevitPath>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- RevitAPI references WindowsBase/System.Drawing; resolve them without enabling UI code. -->
+    <FrameworkReference Include="Microsoft.WindowsDesktop.App" />
+    <ProjectReference Include="../Core/Core.csproj" />
+    <!-- Shared headless extraction core; no RevitAPIUI reference in this project. -->
+    <Compile Include="../Revit/Extractor.cs" Link="Extractor.cs" />
+    <Reference Include="RevitAPI"><HintPath>$(RevitPath)\RevitAPI.dll</HintPath><Private>false</Private></Reference>
+    <PackageReference Include="Autodesk.Forge.DesignAutomation.Revit" Version="2026.0.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Update="RBDE.Automation.addin" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <Target Name="CopyNativeSqlite" AfterTargets="Build">
+    <Copy SourceFiles="$(OutDir)runtimes\win-x64\native\e_sqlite3.dll" DestinationFolder="$(OutDir)" />
+  </Target>
+</Project>

@@ -1,0 +1,23 @@
+# Build and runtime outputs
+**/bin/
+**/obj/
+bin/
+output/
+test-output/
+cloud/dist/
+batch.json
+
+# Credentials, secrets, and local configs
+.env
+.env.*
+*.secret.json
+*.secrets.json
+*credentials*.json
+
+# Agent & IDE metadata
+.agent/
+.vs/
+.vscode/
+*.user
+*.suo
+*.log

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RevitAddIns>
+  <AddIn Type="DBApplication">
+    <Name>RBDE Automation</Name>
+    <Assembly>.\RBDE.Automation.dll</Assembly>
+    <AddInId>6B1E3C2A-8F5D-4C77-9E2B-3A1D0F7C9B41</AddInId>
+    <FullClassName>RevitBatchDataExtractor.Automation.AutomationApp</FullClassName>
+    <Description>Headless Revit Batch Data Extractor for APS Automation API</Description>
+    <VendorId>RBDE</VendorId>
+    <VendorDescription>Batch RVT data extraction</VendorDescription>
+  </AddIn>
+</RevitAddIns>

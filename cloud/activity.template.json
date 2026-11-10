@@ -1,0 +1,30 @@
+{
+  "id": "RBDEExtract",
+  "engine": "Autodesk.Revit+2026",
+  "appbundles": ["{{NICKNAME}}.RBDEAutomation+{{ALIAS}}"],
+  "commandLine": [
+    "$(engine.path)\\\\revitcoreconsole.exe /al \"$(appbundles[RBDEAutomation].path)\""
+  ],
+  "parameters": {
+    "inputRvt": {
+      "verb": "get",
+      "localName": "input.rvt",
+      "required": true,
+      "description": "Revit 2026 model; signed download URL from ACC Data Management"
+    },
+    "params": {
+      "verb": "get",
+      "localName": "params.json",
+      "required": false,
+      "description": "Extraction settings (config.example.json schema; models/outputDirectory ignored)"
+    },
+    "result": {
+      "verb": "put",
+      "localName": "result",
+      "zip": true,
+      "required": true,
+      "description": "Zipped result folder: extract.sqlite, CSVs, errors.jsonl, progress.log, summary.json"
+    }
+  },
+  "description": "Revit Batch Data Extractor - one model per work item"
+}
