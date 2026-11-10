@@ -119,27 +119,27 @@ dialog::backdrop{background:rgba(15,23,42,.55)}
   <div class="cards">
     <div class="card">
       <span>MODELS IN BATCH</span>
-      <strong id="modelsCount">—</strong>
-      <span id="successCount">—</span>
+      <strong id="modelsCount">-</strong>
+      <span id="successCount">-</span>
     </div>
     <div class="card">
       <span>EXTRACTED ELEMENTS</span>
-      <strong id="instancesCount">—</strong>
-      <span id="typesCount">—</span>
+      <strong id="instancesCount">-</strong>
+      <span id="typesCount">-</span>
     </div>
     <div class="card metric">
       <span>FILTERED TOTAL AREA</span>
-      <strong id="qtoArea">—</strong>
+      <strong id="qtoArea">-</strong>
       <span id="qtoAreaSub">Sum of numeric Area parameter</span>
     </div>
     <div class="card metric">
       <span>FILTERED TOTAL VOLUME</span>
-      <strong id="qtoVolume">—</strong>
+      <strong id="qtoVolume">-</strong>
       <span id="qtoVolumeSub">Sum of numeric Volume parameter</span>
     </div>
     <div class="card">
       <span>DISTINCT PARAMETERS</span>
-      <strong id="paramsCount">—</strong>
+      <strong id="paramsCount">-</strong>
       <span id="qtoLengthSub">Available as dynamic columns</span>
     </div>
   </div>
@@ -380,7 +380,7 @@ async function api(route,params){
 }
 
 function fail(e){
-  $('error').textContent=e.message+' — If the local dashboard server timed out, re-open the dashboard from APS Cloud Extractor.';
+  $('error').textContent=e.message+' - If the local dashboard server timed out, re-open the dashboard from APS Cloud Extractor.';
   $('error').classList.remove('hidden');
 }
 
@@ -452,7 +452,7 @@ async function load(){
           const foundKey = Object.keys(pMap).find(k => k.toLowerCase() === col.toLowerCase());
           if (foundKey) val = pMap[foundKey];
         }
-        return '<td title="'+esc(val??'')+'">'+(val !== undefined && val !== null && val !== '' ? esc(val) : '<span class="muted">—</span>')+'</td>';
+        return '<td title="'+esc(val??'')+'">'+(val !== undefined && val !== null && val !== '' ? esc(val) : '<span class="muted">-</span>')+'</td>';
       }).join('');
 
       return '<tr class="selectable" tabindex="0" data-element="'+i+'">' +
@@ -577,7 +577,7 @@ async function loadErrors(){
     const d=await api('errors',new URLSearchParams({model:$('errorModel').value,page:epage}));
     if(id!==errorRequest)return;
     etotal=d.total[0]?.count||0;
-    $('errorRows').innerHTML=d.rows.map(r=>'<tr><td>'+esc(r.utc)+'<br>'+esc(base(r.path||'Batch'))+'</td><td>'+esc(r.element_id??'—')+'</td><td>'+esc(r.stage)+'</td><td><b>'+esc(r.exception_type)+'</b><br>'+esc(r.message)+'</td></tr>').join('')||empty(4,'No extraction errors logged.');
+    $('errorRows').innerHTML=d.rows.map(r=>'<tr><td>'+esc(r.utc)+'<br>'+esc(base(r.path||'Batch'))+'</td><td>'+esc(r.element_id??'-')+'</td><td>'+esc(r.stage)+'</td><td><b>'+esc(r.exception_type)+'</b><br>'+esc(r.message)+'</td></tr>').join('')||empty(4,'No extraction errors logged.');
     $('epage').textContent=fmt(etotal)+' record(s) • Page '+(epage+1)+' of '+Math.max(1,Math.ceil(etotal/100));
     $('eprev').disabled=!epage;
     $('enext').disabled=(epage+1)*100>=etotal;

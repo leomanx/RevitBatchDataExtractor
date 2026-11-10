@@ -7,6 +7,8 @@ using System.Text;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using Microsoft.Data.Sqlite;
 
 namespace RBDE.CloudApp;
@@ -250,6 +252,15 @@ public partial class MainWindow : Window
 
     private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
     {
+        var cmdArgs = Environment.GetCommandLineArgs();
+        var capIdx = Array.IndexOf(cmdArgs, "--capture-docs");
+        if (capIdx >= 0 && capIdx + 1 < cmdArgs.Length)
+        {
+            await CaptureDocumentationScreenshotsAsync(cmdArgs[capIdx + 1]);
+            Application.Current.Shutdown();
+            return;
+        }
+
         if (!aps.HasCredentials)
         {
             OpenSettingsModal("APS credentials not found. Please enter Client ID and Client Secret to connect.");
@@ -257,6 +268,90 @@ public partial class MainWindow : Window
         }
 
         await InitializeHubConnectionAsync();
+    }
+
+    private async Task CaptureDocumentationScreenshotsAsync(string outDir)
+    {
+        Directory.CreateDirectory(outDir);
+
+        var demoHub = new HubItem("b.demo-hub", "ACC Enterprise Hub");
+        var demoProj = new ProjectItem("b.demo-proj", "2026 Mixed-Use Tower Development");
+        var demoFolder = new FolderItem("urn:demo:wip", "Project Files / 01_WIP_Models");
+
+        CmbHubs.SelectionChanged -= CmbHubs_SelectionChanged;
+        CmbProjects.SelectionChanged -= CmbProjects_SelectionChanged;
+        CmbFolders.SelectionChanged -= CmbFolders_SelectionChanged;
+
+        CmbHubs.ItemsSource = new List<HubItem> { demoHub };
+        CmbHubs.SelectedItem = demoHub;
+        CmbProjects.ItemsSource = new List<ProjectItem> { demoProj };
+        CmbProjects.SelectedItem = demoProj;
+        CmbFolders.ItemsSource = new List<FolderItem> { demoFolder };
+        CmbFolders.SelectedItem = demoFolder;
+
+        TxtHubName.Text = "Hub: ACC Enterprise Hub";
+        TxtStatusBadge.Text = "Connected (2LO)";
+
+        currentModels =
+        [
+            new ModelFileItem { Id = "1", Name = "ARC_Main_Tower_R26.rvt", IsSelected = true, Status = "Done (17,425 el / 84,620 pr)" },
+            new ModelFileItem { Id = "2", Name = "STR_Superstructure_R26.rvt", IsSelected = true, Status = "Done (8,912 el / 41,205 pr)" },
+            new ModelFileItem { Id = "3", Name = "MEP_HVAC_Piping_R26.rvt", IsSelected = true, Status = "Done (14,310 el / 68,110 pr)" },
+            new ModelFileItem { Id = "4", Name = "INT_Podium_Fitout_R26.rvt", IsSelected = true, Status = "Done (6,180 el / 29,400 pr)" },
+            new ModelFileItem { Id = "5", Name = "SITE_Landscape_Civil_R26.rvt", IsSelected = false, Status = "Ready" }
+        ];
+        LstModels.ItemsSource = currentModels;
+        UpdateSelectedCount();
+
+        ProgBatch.Maximum = 4;
+        ProgBatch.Value = 4;
+        TxtProgressStatus.Text = "Extraction completed for 4 model(s) in 34.2s. Output saved to SQLite & elements_wide.csv.";
+
+        TxtLog.Text = string.Join(Environment.NewLine,
+            "[10:15:02] Authenticating with Autodesk Platform Services (2-Legged OAuth)...",
+            "[OK] Connected to Hub: ACC Enterprise Hub",
+            "[OK] Selected Project: 2026 Mixed-Use Tower Development | Folder: Project Files / 01_WIP_Models",
+            "============================================================",
+            "[10:15:08] Initiating Batch Extraction (4 models)...",
+            "Category Scope   : ALL Model Categories (Architecture, Structure, MEP, Interior)",
+            "Priority Columns : Level, Base Constraint, Type Mark, Mark, Comments, Type Comments, Area, Volume, Length, Width, Height, Material, Fire Rating, Workset, Phase Created",
+            "============================================================",
+            ">>> [1/4] ARC_Main_Tower_R26.rvt -> View '{3D}' -> 17,425 elements, 84,620 parameter records (8.9s)",
+            ">>> [2/4] STR_Superstructure_R26.rvt -> View '{3D}' -> 8,912 elements, 41,205 parameter records (7.1s)",
+            ">>> [3/4] MEP_HVAC_Piping_R26.rvt -> View '{3D}' -> 14,310 elements, 68,110 parameter records (10.4s)",
+            ">>> [4/4] INT_Podium_Fitout_R26.rvt -> View '{3D}' -> 6,180 elements, 29,400 parameter records (6.2s)",
+            "[SUCCESS] Persisted extract.sqlite, elements_wide.csv, elements.csv, parameters.csv in 34.2s.");
+
+        await Task.Delay(350);
+        UpdateLayout();
+        TxtLog.ScrollToEnd();
+        await Task.Delay(100);
+        SaveWindowPng(Path.Combine(outDir, "cloud-extractor-main.png"));
+
+        // Now open the Settings Popup Modal with sanitized placeholder values
+        TxtClientId.Text = "YOUR_APS_CLIENT_ID_HERE";
+        TxtClientSecret.Text = "************************************************";
+        TxtModalStatus.Text = "Enter your Server-to-Server Client ID and Secret to sync directly with your ACC Hub.";
+        ModalSettings.Visibility = Visibility.Visible;
+
+        await Task.Delay(250);
+        UpdateLayout();
+        SaveWindowPng(Path.Combine(outDir, "cloud-extractor-settings.png"));
+    }
+
+    private void SaveWindowPng(string filePath)
+    {
+        if (Content is not FrameworkElement root) return;
+        int w = (int)Math.Max(1200, root.ActualWidth);
+        int h = (int)Math.Max(800, root.ActualHeight);
+
+        var rtb = new RenderTargetBitmap(w, h, 96, 96, PixelFormats.Pbgra32);
+        rtb.Render(root);
+
+        var encoder = new PngBitmapEncoder();
+        encoder.Frames.Add(BitmapFrame.Create(rtb));
+        using var fs = File.Create(filePath);
+        encoder.Save(fs);
     }
 
     private async Task InitializeHubConnectionAsync()
