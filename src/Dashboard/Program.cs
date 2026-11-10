@@ -14,6 +14,9 @@ if (args.Length == 0 || !File.Exists(args[0]))
 }
 
 var database = Path.GetFullPath(args[0]);
+var runDir = Path.GetDirectoryName(database)!;
+var warehousePath = Path.Combine(Path.GetDirectoryName(runDir) ?? runDir, "warehouse.sqlite");
+
 using var listener = new HttpListener();
 int port = 0;
 for (int attempt = 0; attempt < 20; attempt++)
@@ -79,9 +82,9 @@ while (listener.IsListening)
 
             var q = context.Request.QueryString;
 
-            List<Dictionary<string, object?>> Query(string sql, Dictionary<string, object>? parameters = null)
+            List<Dictionary<string, object?>> Query(string sql, Dictionary<string, object>? parameters = null, SqliteConnection? targetConn = null)
             {
-                using var cmd = db.CreateCommand();
+                using var cmd = (targetConn ?? db).CreateCommand();
                 cmd.CommandText = sql;
                 cmd.CommandTimeout = 30;
                 if (parameters != null)
@@ -158,6 +161,9 @@ while (listener.IsListening)
             {
                 "api/overview" => BuildOverview(),
                 "api/elements" => BuildElementsResponse(),
+                "api/heatmap" => BuildHeatmapResponse(),
+                "api/values" => BuildValuesDistributionResponse(),
+                "api/issues" => BuildIssuesResponse(),
                 "api/detail" => Query(
                     "SELECT scope,parameter_key,name,storage_type,has_value,raw_value,display_value,unit_type_id FROM parameters WHERE model_id=$model AND element_id=$element ORDER BY scope,name",
                     new() { ["$model"] = q["model"] ?? "", ["$element"] = q["element"] ?? "" }),
@@ -181,16 +187,134 @@ while (listener.IsListening)
                 var availParams = Query("SELECT name, count(DISTINCT model_id || ':' || element_id) elem_count FROM parameters WHERE has_value=1 AND trim(display_value)<>'' GROUP BY name ORDER BY elem_count DESC, name ASC LIMIT 250");
                 var levels = Query("SELECT display_value AS level, count(*) count FROM parameters WHERE name IN ('Level','Base Constraint','Reference Level','Schedule Level') AND trim(display_value)<>'' GROUP BY display_value ORDER BY count DESC LIMIT 40");
 
+                var hasIssues = TableExists("issues");
+                var issueTotals = hasIssues
+                    ? Query("SELECT discipline, severity, count(*) count FROM issues GROUP BY discipline, severity")
+                    : [];
+
+                var historyRuns = new List<Dictionary<string, object?>>();
+                if (File.Exists(warehousePath))
+                {
+                    try
+                    {
+                        using var wConn = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = warehousePath, Mode = SqliteOpenMode.ReadOnly, Pooling = false }.ToString());
+                        wConn.Open();
+                        historyRuns = Query("SELECT * FROM runs ORDER BY started_utc DESC LIMIT 12", null, wConn);
+                    }
+                    catch { }
+                }
+
                 return new
                 {
-                    run = Path.GetFileName(Path.GetDirectoryName(database)),
+                    run = Path.GetFileName(runDir),
                     models = Query("SELECT m.*, (SELECT count(*) FROM errors r WHERE r.model_id=m.model_id) error_count FROM models m ORDER BY model_id"),
                     categories = Query("SELECT DISTINCT category FROM elements WHERE category IS NOT NULL AND category<>'' ORDER BY category"),
                     levels,
                     totals = Query("SELECT kind, count(*) count FROM elements GROUP BY kind"),
                     errors = Query("SELECT count(*) count FROM errors"),
+                    issueSummary = issueTotals,
+                    historyRuns,
                     priorityColumns = priorityCols,
                     availableParameters = availParams
+                };
+            }
+
+            object BuildHeatmapResponse()
+            {
+                var cols = (q["columns"] ?? "")
+                    .Split(',', StringSplitOptions.RemoveEmptyEntries)
+                    .Select(s => s.Trim())
+                    .Where(s => s.Length > 0)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Take(10)
+                    .ToList();
+
+                var topCats = Query($"SELECT e.category, count(*) total {from} AND e.kind='instance' GROUP BY e.category ORDER BY total DESC LIMIT 12", values);
+                if (topCats.Count == 0 || cols.Count == 0)
+                    return new { categories = topCats, columns = cols, cells = Array.Empty<object>() };
+
+                var catNames = topCats.Select(c => c["category"]?.ToString() ?? "").Where(s => s.Length > 0).ToList();
+                var hParams = new Dictionary<string, object>(values);
+                var catPl = new List<string>();
+                for (int i = 0; i < catNames.Count; i++) { var k = $"$hcat{i}"; catPl.Add(k); hParams[k] = catNames[i]; }
+                var colPl = new List<string>();
+                for (int i = 0; i < cols.Count; i++) { var k = $"$hcol{i}"; colPl.Add(k); hParams[k] = cols[i]; }
+
+                var sql = $@"
+                    SELECT e.category, p.name, count(DISTINCT e.model_id || ':' || e.element_id) AS filled
+                    FROM parameters p
+                    JOIN elements e ON e.model_id=p.model_id AND e.element_id=p.element_id
+                    JOIN models m ON m.model_id=e.model_id
+                    WHERE {string.Join(" AND ", terms)}
+                      AND e.kind='instance'
+                      AND e.category IN ({string.Join(",", catPl)})
+                      AND p.name IN ({string.Join(",", colPl)})
+                      AND p.has_value=1 AND trim(p.display_value)<>''
+                    GROUP BY e.category, p.name";
+
+                var cells = Query(sql, hParams);
+                return new { categories = topCats, columns = cols, cells };
+            }
+
+            object BuildValuesDistributionResponse()
+            {
+                var targetParam = q["targetParam"] ?? "Type Mark";
+                var vParams = new Dictionary<string, object>(values) { ["$tparam"] = targetParam };
+
+                var distSql = $@"
+                    SELECT p.display_value AS val, count(DISTINCT e.model_id || ':' || e.element_id) AS count
+                    FROM parameters p
+                    JOIN elements e ON e.model_id=p.model_id AND e.element_id=p.element_id
+                    JOIN models m ON m.model_id=e.model_id
+                    WHERE {string.Join(" AND ", terms)}
+                      AND lower(p.name)=lower($tparam)
+                      AND p.has_value=1 AND trim(p.display_value)<>''
+                    GROUP BY p.display_value
+                    ORDER BY count DESC, val ASC
+                    LIMIT 25";
+
+                return new
+                {
+                    parameter = targetParam,
+                    distribution = Query(distSql, vParams)
+                };
+            }
+
+            object BuildIssuesResponse()
+            {
+                if (!TableExists("issues"))
+                {
+                    return new
+                    {
+                        total = 0,
+                        byDiscipline = Array.Empty<object>(),
+                        byRule = Array.Empty<object>(),
+                        rows = Array.Empty<object>()
+                    };
+                }
+
+                var iVals = new Dictionary<string, object>();
+                var iTerms = new List<string> { "1=1" };
+                if (!string.IsNullOrEmpty(q["discipline"])) { iTerms.Add("i.discipline=$disc"); iVals["$disc"] = q["discipline"]!; }
+                if (!string.IsNullOrEmpty(q["severity"])) { iTerms.Add("i.severity=$sev"); iVals["$sev"] = q["severity"]!; }
+                if (!string.IsNullOrEmpty(q["rule"])) { iTerms.Add("i.rule_id=$rule"); iVals["$rule"] = q["rule"]!; }
+                if (!string.IsNullOrEmpty(q["model"])) { iTerms.Add("i.model_id=$model"); iVals["$model"] = q["model"]!; }
+
+                var whereClause = " WHERE " + string.Join(" AND ", iTerms);
+                int limit = int.TryParse(q["limit"], out var rl) ? Math.Clamp(rl, 1, 5000) : 100;
+                long offset = int.TryParse(q["page"], out var ip) ? Math.Clamp(ip, 0, 1000000) * (long)limit : 0;
+
+                var tot = Query("SELECT count(*) count FROM issues i" + whereClause, iVals);
+                var byDisc = Query("SELECT discipline, severity, count(*) count FROM issues GROUP BY discipline, severity ORDER BY discipline, severity");
+                var byRule = Query("SELECT rule_id, requirement_id, discipline, severity, parameter_name, count(*) count FROM issues GROUP BY rule_id, requirement_id, discipline, severity, parameter_name ORDER BY count DESC");
+                var rows = Query($"SELECT i.*, m.path FROM issues i LEFT JOIN models m USING(model_id){whereClause} ORDER BY i.issue_id LIMIT {limit} OFFSET {offset}", iVals);
+
+                return new
+                {
+                    total = tot[0]["count"],
+                    byDiscipline = byDisc,
+                    byRule,
+                    rows
                 };
             }
 
@@ -216,7 +340,6 @@ while (listener.IsListening)
                     $"SELECT e.*, m.path, m.status{from} ORDER BY e.model_id, e.element_id LIMIT {limit} OFFSET {offset}",
                     values);
 
-                // Attach dynamic parameter values onto each returned row
                 if (rows.Count > 0 && requestedCols.Count > 0)
                 {
                     var rowMap = new Dictionary<(long mId, long elId), Dictionary<string, string?>>();
@@ -255,7 +378,6 @@ while (listener.IsListening)
                     }
                 }
 
-                // Compute parameter completeness for top 10 requested columns (when limit <= 100)
                 var completeness = new List<object>();
                 var qtoTotals = new List<Dictionary<string, object?>>();
 
@@ -302,7 +424,6 @@ while (listener.IsListening)
                         }
                     }
 
-                    // QTO Rollup for Area, Volume, Length
                     var qtoSql = $@"
                         SELECT p.name,
                                sum(CAST(p.raw_value AS REAL)) AS total_value,

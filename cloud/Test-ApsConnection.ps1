@@ -28,7 +28,21 @@ $base = 'https://developer.api.autodesk.com'
 function Get-ApsSetting([string]$Name) {
     $value = [Environment]::GetEnvironmentVariable($Name, 'Process')
     if (-not $value) { $value = [Environment]::GetEnvironmentVariable($Name, 'User') }
-    if (-not $value) { throw "$Name is not set. Run: setx $Name `"<value>`"" }
+    if (-not $value) {
+        $dpapiPath = Join-Path $env:LOCALAPPDATA 'MMK_BIM\RBDE\credentials.dpapi.json'
+        if (Test-Path $dpapiPath) {
+            $json = Get-Content $dpapiPath -Raw | ConvertFrom-Json
+            if ($Name -eq 'APS_CLIENT_ID') { return $json.clientId.Trim() }
+            if ($Name -eq 'APS_CLIENT_SECRET' -and $json.encryptedSecret) {
+                Add-Type -AssemblyName System.Security
+                $entropy = [System.Text.Encoding]::UTF8.GetBytes('RBDE.CloudApp.ApsSecret.v1')
+                $cipher = [Convert]::FromBase64String($json.encryptedSecret)
+                $plain = [System.Security.Cryptography.ProtectedData]::Unprotect($cipher, $entropy, [System.Security.Cryptography.DataProtectionScope]::CurrentUser)
+                return [System.Text.Encoding]::UTF8.GetString($plain).Trim()
+            }
+        }
+    }
+    if (-not $value) { throw "$Name is not set. Configure it in RBDE.CloudApp Settings (DPAPI encrypted)." }
     return $value.Trim()
 }
 

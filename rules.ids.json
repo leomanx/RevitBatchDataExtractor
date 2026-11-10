@@ -1,0 +1,170 @@
+{
+  "schema": "buildingSMART-IDS-1.0-JSON",
+  "info": {
+    "title": "MMK Standard AEC Information Delivery Specification (IDS)",
+    "version": "1.0.0",
+    "description": "Automated BIM QA/QC rules aligned with buildingSMART IDS facets and ISO 19650 EIR requirements, grouped by responsible team code (AR, ID, MEP, STR)."
+  },
+  "specifications": [
+    {
+      "id": "IDS-AR-001",
+      "name": "Architectural Elements Must Have Level Assigned",
+      "requirementId": "EIR-AR-101",
+      "discipline": "AR",
+      "severity": "High",
+      "applicability": {
+        "categories": ["Walls", "Doors", "Windows", "Floors", "Ceilings", "Columns", "Stairs", "Railings"]
+      },
+      "requirements": [
+        {
+          "facet": "property",
+          "propertySet": "Constraints",
+          "baseNames": ["Level", "Base Constraint", "Reference Level", "Schedule Level"],
+          "cardinality": "required",
+          "instructions": "Assign a valid building Level or Base Constraint to every architectural element."
+        }
+      ]
+    },
+    {
+      "id": "IDS-AR-002",
+      "name": "Doors and Windows Must Have Type Mark and Mark",
+      "requirementId": "EIR-AR-102",
+      "discipline": "AR",
+      "severity": "High",
+      "applicability": {
+        "categories": ["Doors", "Windows"]
+      },
+      "requirements": [
+        {
+          "facet": "property",
+          "propertySet": "Identity Data",
+          "baseNames": ["Type Mark"],
+          "cardinality": "required",
+          "instructions": "Populate Type Mark on all Door and Window family types for schedule indexing."
+        },
+        {
+          "facet": "property",
+          "propertySet": "Identity Data",
+          "baseNames": ["Mark"],
+          "cardinality": "required",
+          "instructions": "Populate instance Mark on every Door and Window instance."
+        }
+      ]
+    },
+    {
+      "id": "IDS-AR-003",
+      "name": "Walls and Floors Must Have Positive Area",
+      "requirementId": "EIR-QTO-201",
+      "discipline": "AR",
+      "severity": "Medium",
+      "applicability": {
+        "categories": ["Walls", "Floors", "Ceilings", "Roofs"]
+      },
+      "requirements": [
+        {
+          "facet": "property",
+          "propertySet": "Dimensions",
+          "baseNames": ["Area"],
+          "cardinality": "required",
+          "minInclusive": 0.01,
+          "instructions": "Ensure element geometry produces a valid Area (> 0.01 m2) for QTO takeoff."
+        }
+      ]
+    },
+    {
+      "id": "IDS-AR-004",
+      "name": "Rooms Must Have Room Name, Number, and Positive Area",
+      "requirementId": "EIR-AR-105",
+      "discipline": "AR",
+      "severity": "High",
+      "applicability": {
+        "categories": ["Rooms"]
+      },
+      "requirements": [
+        {
+          "facet": "property",
+          "propertySet": "Identity Data",
+          "baseNames": ["Number", "Room Number"],
+          "cardinality": "required",
+          "instructions": "Every Room must have a Room Number assigned."
+        },
+        {
+          "facet": "property",
+          "propertySet": "Dimensions",
+          "baseNames": ["Area"],
+          "cardinality": "required",
+          "minInclusive": 0.1,
+          "instructions": "Room must be enclosed and have a positive Area (> 0.1 m2)."
+        }
+      ]
+    },
+    {
+      "id": "IDS-ID-001",
+      "name": "Interior Furniture and Casework Must Have Type Mark",
+      "requirementId": "EIR-ID-301",
+      "discipline": "ID",
+      "severity": "Medium",
+      "applicability": {
+        "categories": ["Furniture", "Furniture Systems", "Casework", "Specialty Equipment", "Food Service Equipment"]
+      },
+      "requirements": [
+        {
+          "facet": "property",
+          "propertySet": "Identity Data",
+          "baseNames": ["Type Mark", "Mark"],
+          "cardinality": "required",
+          "instructions": "FF&E and Casework items require Type Mark or Mark for interior schedules."
+        }
+      ]
+    },
+    {
+      "id": "IDS-MEP-001",
+      "name": "MEP Equipment and Fixtures Must Have Level or Reference Level",
+      "requirementId": "EIR-MEP-401",
+      "discipline": "MEP",
+      "severity": "Medium",
+      "applicability": {
+        "categories": [
+          "Mechanical Equipment", "Plumbing Fixtures", "Lighting Fixtures", "Lighting Devices",
+          "Sprinklers", "Fire Alarm Devices", "Communication Devices", "Electrical Equipment", "Air Terminals"
+        ]
+      },
+      "requirements": [
+        {
+          "facet": "property",
+          "propertySet": "Constraints",
+          "baseNames": ["Level", "Reference Level", "Schedule Level"],
+          "cardinality": "required",
+          "instructions": "MEP equipment and terminal devices must be associated with a valid Level."
+        }
+      ]
+    },
+    {
+      "id": "IDS-STR-001",
+      "name": "Structural Elements Must Have Volume and Material",
+      "requirementId": "EIR-STR-501",
+      "discipline": "STR",
+      "severity": "High",
+      "applicability": {
+        "categories": ["Structural Columns", "Structural Framing", "Structural Foundations"]
+      },
+      "requirements": [
+        {
+          "facet": "property",
+          "propertySet": "Dimensions",
+          "baseNames": ["Volume"],
+          "cardinality": "required",
+          "minInclusive": 0.001,
+          "instructions": "Structural elements must report valid Volume for concrete/steel takeoff."
+        },
+        {
+          "facet": "property",
+          "propertySet": "Materials and Finishes",
+          "baseNames": ["Structural Material", "Material"],
+          "cardinality": "required",
+          "instructions": "Assign Structural Material to all structural columns, framing, and foundations."
+        }
+      ]
+    }
+  ]
+}

@@ -311,6 +311,8 @@
                                     <ColumnDefinition Width="*"/>
                                     <ColumnDefinition Width="10"/>
                                     <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="10"/>
+                                    <ColumnDefinition Width="Auto"/>
                                 </Grid.ColumnDefinitions>
                                 <Button x:Name="BtnStartExtract" Grid.Column="0" Content="Extract Selected Models"
                                         Background="#00A896" Foreground="White" FontSize="13.5" FontWeight="Bold"
@@ -323,6 +325,10 @@
                                         Style="{StaticResource SecondaryBtn}" Padding="10,10" Click="BtnDashboard_Click"/>
                                 <Button x:Name="BtnOpenOutputFolder" Grid.Column="4" Content="Open Output Folder"
                                         Style="{StaticResource SecondaryBtn}" Padding="12,10" Click="BtnOpenOutputFolder_Click"/>
+                                <Button x:Name="BtnScheduleTask" Grid.Column="6" Content="Schedule Weekly Run"
+                                        Style="{StaticResource SecondaryBtn}" Background="#1E3A5F" Foreground="#6FFFE9"
+                                        Padding="12,10" Click="BtnScheduleTask_Click"
+                                        ToolTip="Register or update a Windows Scheduled Task to run headless batch extraction automatically"/>
                             </Grid>
 
                             <ProgressBar x:Name="ProgBatch" Height="5" Background="#0B132B" Foreground="#00A896" BorderThickness="0" Margin="0,0,0,4"/>
@@ -360,9 +366,9 @@
                     <TextBox x:Name="TxtClientId" Background="#0B132B" Foreground="#FFFFFF" Padding="8,6" FontSize="12"
                              BorderBrush="#3A506B" Margin="0,0,0,12"/>
 
-                    <TextBlock Text="APS Client Secret:" FontSize="11.5" Foreground="#CBD5E1" Margin="0,0,0,4"/>
-                    <TextBox x:Name="TxtClientSecret" Background="#0B132B" Foreground="#FFFFFF" Padding="8,6" FontSize="12"
-                             BorderBrush="#3A506B" Margin="0,0,0,16"/>
+                    <TextBlock Text="APS Client Secret (Encrypted via Windows DPAPI):" FontSize="11.5" Foreground="#CBD5E1" Margin="0,0,0,4"/>
+                    <PasswordBox x:Name="PwdClientSecret" Background="#0B132B" Foreground="#FFFFFF" Padding="8,6" FontSize="12"
+                                 PasswordChar="●" BorderBrush="#3A506B" Margin="0,0,0,16"/>
 
                     <TextBlock x:Name="TxtModalStatus" Text="" FontSize="11.5" Foreground="#64DFDF" Margin="0,0,0,14" TextWrapping="Wrap"/>
 

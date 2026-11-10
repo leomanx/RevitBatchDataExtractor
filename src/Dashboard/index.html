@@ -3,28 +3,28 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>BIM Data Review &amp; Analytics • Batch Data Extractor</title>
+<title>BIM Data Review &amp; IDS QA Analytics</title>
 <style>
 :root{--ink:#0f172a;--muted:#64748b;--bg:#f1f5f9;--line:#cbd5e1;--teal:#0d9488;--teal-dark:#0f766e;--nav:#0b132b;--panel:#ffffff;--warn:#d97706;--red:#dc2626;--blue:#0284c7}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);font:13.5px/1.55 "Segoe UI",system-ui,-apple-system,sans-serif}
 button,input,select{font:inherit}
 button{cursor:pointer}
-aside{position:fixed;inset:0 auto 0 0;width:236px;background:var(--nav);color:#f8fafc;padding:28px 20px;display:flex;flex-direction:column;border-right:1px solid #1e293b}
-.brand{font-size:21px;letter-spacing:-.5px;font-weight:700;color:#fff}
+aside{position:fixed;inset:0 auto 0 0;width:244px;background:var(--nav);color:#f8fafc;padding:26px 18px;display:flex;flex-direction:column;border-right:1px solid #1e293b}
+.brand{font-size:20px;letter-spacing:-.5px;font-weight:700;color:#fff}
 .brand span{color:#5eead4}
-.eyebrow{font-size:10.5px;text-transform:uppercase;letter-spacing:1.6px;color:#94a3b8;margin:0 0 6px;font-weight:600}
-nav{margin-top:36px;display:grid;gap:6px}
-nav button{border:0;background:transparent;color:#cbd5e1;text-align:left;padding:11px 14px;border-radius:6px;font-weight:500;transition:background .15s}
+.eyebrow{font-size:10.5px;text-transform:uppercase;letter-spacing:1.5px;color:#94a3b8;margin:0 0 6px;font-weight:600}
+nav{margin-top:30px;display:grid;gap:6px}
+nav button{border:0;background:transparent;color:#cbd5e1;text-align:left;padding:10px 12px;border-radius:6px;font-weight:500;font-size:13px;transition:background .15s}
 nav button:hover{background:#1e293b;color:#fff}
 nav button.active{background:#0d9488;color:#fff;font-weight:600}
 .side-note{margin-top:auto;font-size:11.5px;color:#94a3b8;line-height:1.5;border-top:1px solid #1e293b;padding-top:14px}
-main{margin-left:236px;padding:26px 34px;max-width:1920px}
-header{display:flex;justify-content:space-between;gap:20px;align-items:center;margin-bottom:18px}
-h1{font-size:26px;letter-spacing:-.6px;margin:2px 0;color:#0f172a}
-h2{font-size:15.5px;margin:0;font-weight:700;color:#0f172a}
+main{margin-left:244px;padding:24px 32px;max-width:1920px}
+header{display:flex;justify-content:space-between;gap:20px;align-items:center;margin-bottom:14px}
+h1{font-size:25px;letter-spacing:-.5px;margin:2px 0;color:#0f172a}
+h2{font-size:15px;margin:0;font-weight:700;color:#0f172a}
 p{margin:3px 0}
-.muted{color:var(--muted);font-size:12.5px}
+.muted{color:var(--muted);font-size:12px}
 .button{background:#fff;border:1px solid var(--line);border-radius:6px;padding:7px 13px;color:var(--ink);font-weight:600;font-size:12.5px;transition:all .15s}
 .button:hover:not(:disabled){border-color:#94a3b8;background:#f8fafc}
 .primary{background:var(--teal);color:#fff;border-color:var(--teal)}
@@ -32,42 +32,49 @@ p{margin:3px 0}
 .chip-btn{background:#f1f5f9;border:1px solid #cbd5e1;border-radius:5px;padding:4px 10px;font-size:11.5px;font-weight:600;color:#334155}
 .chip-btn:hover{background:#e2e8f0;color:#0f172a}
 .chip-btn.active{background:#ccfbf1;border-color:#0d9488;color:#0f766e}
-.cards{display:grid;grid-template-columns:repeat(5,1fr);gap:14px;margin:16px 0 20px}
-.card,.panel{background:var(--panel);border:1px solid #e2e8f0;border-radius:10px;padding:18px;box-shadow:0 1px 2px rgba(15,23,42,.03)}
-.card strong{font-size:26px;display:block;line-height:1.3;margin:2px 0;color:#0f172a}
+.coverage-bar{background:#e0f2fe;border-left:4px solid var(--blue);padding:9px 14px;border-radius:6px;font-size:12px;color:#0c4a6e;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px}
+.cards{display:grid;grid-template-columns:repeat(5,1fr);gap:14px;margin:0 0 18px}
+.card,.panel{background:var(--panel);border:1px solid #e2e8f0;border-radius:10px;padding:16px;box-shadow:0 1px 2px rgba(15,23,42,.03)}
+.card strong{font-size:25px;display:block;line-height:1.3;margin:2px 0;color:#0f172a}
 .card span{color:var(--muted);font-size:11.5px;font-weight:500}
 .card.warning strong{color:var(--warn)}
 .card.metric strong{color:var(--blue)}
-.grid-3{display:grid;grid-template-columns:1.1fr 1.1fr .9fr;gap:16px;margin-bottom:18px}
+.grid-3{display:grid;grid-template-columns:1.1fr 1.1fr .95fr;gap:16px;margin-bottom:18px}
+.grid-2{display:grid;grid-template-columns:1.35fr 1fr;gap:16px;margin-bottom:18px}
 .panel{margin-bottom:18px;min-width:0}
-.bar{display:grid;grid-template-columns:155px 1fr 76px;align-items:center;gap:10px;width:100%;border:0;background:none;padding:5px 2px;text-align:left;color:var(--ink);border-radius:4px}
+.bar{display:grid;grid-template-columns:150px 1fr 72px;align-items:center;gap:10px;width:100%;border:0;background:none;padding:5px 2px;text-align:left;color:var(--ink);border-radius:4px}
 .bar:hover{background:#f8fafc}
-.bar span:first-child{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:12.5px;font-weight:500}
+.bar span:first-child{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:12px;font-weight:500}
 .track{background:#e2e8f0;border-radius:4px;height:10px;overflow:hidden}
 .fill{height:10px;background:var(--teal);border-radius:4px}
 .fill.completeness{background:var(--blue)}
 .fill.low{background:var(--warn)}
 .bar b{text-align:right;font-weight:600;font-size:12px;color:#334155}
-.table-wrap{overflow:auto;max-height:580px;border:1px solid #e2e8f0;border-radius:8px}
+.table-wrap{overflow:auto;max-height:560px;border:1px solid #e2e8f0;border-radius:8px}
 table{width:100%;border-collapse:collapse;font-size:12.5px}
 th{background:#f8fafc;color:#475569;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.5px;position:sticky;top:0;z-index:2;border-bottom:2px solid #cbd5e1;white-space:nowrap}
 th.dyn-col{background:#f0fdfa;color:#0f766e}
-td,th{padding:9px 11px;border-bottom:1px solid #e2e8f0;vertical-align:top}
+td,th{padding:8px 10px;border-bottom:1px solid #e2e8f0;vertical-align:top}
 td{max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 tr.selectable{cursor:pointer}
 tr.selectable:hover{background:#f0fdfa}
 .badge{display:inline-block;border-radius:4px;padding:2px 7px;background:#e2e8f0;white-space:nowrap;font-size:11px;font-weight:600;text-transform:uppercase}
-.badge.succeeded{color:#0f766e;background:#ccfbf1}
-.badge.failed,.badge.close_failed{color:#b91c1c;background:#fee2e2}
-.badge.partial,.badge.cancelled,.badge.skipped_cancelled{color:#b45309;background:#fef3c7}
-.filters{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:12px}
+.badge.succeeded,.badge.low{color:#0f766e;background:#ccfbf1}
+.badge.failed,.badge.close_failed,.badge.high{color:#b91c1c;background:#fee2e2}
+.badge.partial,.badge.cancelled,.badge.medium{color:#b45309;background:#fef3c7}
+.badge.team{background:#e0f2fe;color:#0369a1;font-weight:700}
+.hm-cell{text-align:center;font-weight:700;font-size:11.5px;cursor:pointer;border-radius:4px;padding:6px 4px}
+.hm-high{background:#ccfbf1;color:#0f766e}
+.hm-mid{background:#fef3c7;color:#b45309}
+.hm-low{background:#fee2e2;color:#b91c1c}
+.filters{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:11px}
 label{font-size:11.5px;color:#475569;font-weight:600;display:block}
-input,select{width:100%;padding:7px 9px;border:1px solid #cbd5e1;border-radius:6px;color:#000000;background:#ffffff;margin-top:4px;min-width:0;font-size:12.5px}
+input,select{width:100%;padding:6px 9px;border:1px solid #cbd5e1;border-radius:6px;color:#000000;background:#ffffff;margin-top:4px;min-width:0;font-size:12.5px}
 input:focus,select:focus{outline:2px solid #0d9488;border-color:transparent}
-.actions{display:flex;align-items:center;gap:10px;margin-top:14px;flex-wrap:wrap}
+.actions{display:flex;align-items:center;gap:10px;margin-top:12px;flex-wrap:wrap}
 .heading-row{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:10px;flex-wrap:wrap}
 .pager{display:flex;justify-content:space-between;gap:14px;align-items:center;margin-top:12px}
-.empty{padding:32px;text-align:center;color:var(--muted)}
+.empty{padding:28px;text-align:center;color:var(--muted)}
 .error{background:#fee2e2;color:#b91c1c;padding:12px 16px;margin:12px 0;border-radius:8px;white-space:pre-wrap;font-weight:500}
 .hidden{display:none!important}
 button:disabled{opacity:.45;cursor:default}
@@ -77,34 +84,36 @@ dialog::backdrop{background:rgba(15,23,42,.55)}
 .mono{font-family:Consolas,monospace;font-size:11.5px}
 .count-label{color:var(--teal-dark);font-weight:700;font-size:13px}
 .col-picker{background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px;margin-bottom:12px}
-.col-pills{display:flex;flex-wrap:wrap;gap:6px;max-height:115px;overflow-y:auto;padding-top:8px}
+.col-pills{display:flex;flex-wrap:wrap;gap:6px;max-height:110px;overflow-y:auto;padding-top:8px}
 .col-pill{display:inline-flex;align-items:center;gap:5px;background:#fff;border:1px solid #cbd5e1;border-radius:5px;padding:3px 8px;font-size:11.5px;cursor:pointer;user-select:none}
 .col-pill input{width:auto;margin:0;padding:0}
 .col-pill.checked{background:#f0fdfa;border-color:#0d9488;color:#0f766e;font-weight:600}
-@media(max-width:1300px){.grid-3{grid-template-columns:1fr 1fr}.filters{grid-template-columns:repeat(3,1fr)}.cards{grid-template-columns:repeat(3,1fr)}}
-@media(max-width:850px){aside{position:static;width:auto;padding:16px}.side-note{display:none}nav{margin-top:10px;display:flex}main{margin:0;padding:16px}.grid-3,.filters,.cards{grid-template-columns:1fr}}
+@media(max-width:1300px){.grid-3,.grid-2{grid-template-columns:1fr}.filters{grid-template-columns:repeat(3,1fr)}.cards{grid-template-columns:repeat(3,1fr)}}
+@media(max-width:850px){aside{position:static;width:auto;padding:16px}.side-note{display:none}nav{margin-top:10px;display:flex;flex-wrap:wrap}main{margin:0;padding:16px}.filters,.cards{grid-template-columns:1fr}}
 @media print{aside,.filters,.actions,.pager,.col-picker,header button{display:none!important}main{margin:0;padding:0}.panel{break-inside:avoid}.table-wrap{max-height:none;overflow:visible}body{background:#fff}}
 </style>
 </head>
 <body>
 <aside>
   <div class="eyebrow">MMK BIM Solutions</div>
-  <div class="brand">AEC <span>Data Review</span></div>
+  <div class="brand">AEC <span>Decision Hub</span></div>
   <nav>
-    <button class="active" data-tab="review">01 &nbsp; Model Explorer &amp; QA</button>
-    <button data-tab="errors">02 &nbsp; Extraction Log</button>
+    <button class="active" data-tab="review">01 &nbsp; Model Explorer &amp; QTO</button>
+    <button data-tab="heatmap">02 &nbsp; Heatmap &amp; Value Audit</button>
+    <button data-tab="issues">03 &nbsp; IDS Rules &amp; Team Fixes</button>
+    <button data-tab="errors">04 &nbsp; History &amp; Logs</button>
   </nav>
   <div class="side-note">
-    <strong>LOCAL SQLITE ENGINE</strong><br>
-    Pivoted AEC parameter explorer, completeness auditor, and wide CSV exporter for Power BI &amp; Excel.
+    <strong>IDS &amp; SQLITE WAREHOUSE</strong><br>
+    buildingSMART IDS rule engine, Category x Parameter heatmap, and Team (AR/ID/MEP/STR) fix packages.
   </div>
 </aside>
 
 <main>
   <header>
     <div>
-      <div class="eyebrow">MODEL DERIVATIVE &amp; BATCH ANALYTICS WORKSPACE</div>
-      <h1>AEC Parameter Inspection &amp; Visualization</h1>
+      <div class="eyebrow">MODEL DERIVATIVE &amp; IDS DECISION WORKSPACE</div>
+      <h1>AEC Parameter Inspection, QA/QC &amp; Decision Support</h1>
       <p id="run" class="muted">Loading batch database...</p>
     </div>
     <div style="display:flex;gap:8px">
@@ -112,6 +121,11 @@ dialog::backdrop{background:rgba(15,23,42,.55)}
       <button class="button" id="print">Print / Export PDF</button>
     </div>
   </header>
+
+  <div id="coverageBanner" class="coverage-bar">
+    <span id="coverageText">View coverage: loading...</span>
+    <span>Note: Model Derivative reflects elements visible in the published 3D view.</span>
+  </div>
 
   <div id="error" class="error hidden" role="alert"></div>
 
@@ -137,15 +151,15 @@ dialog::backdrop{background:rgba(15,23,42,.55)}
       <strong id="qtoVolume">-</strong>
       <span id="qtoVolumeSub">Sum of numeric Volume parameter</span>
     </div>
-    <div class="card">
-      <span>DISTINCT PARAMETERS</span>
-      <strong id="paramsCount">-</strong>
-      <span id="qtoLengthSub">Available as dynamic columns</span>
+    <div class="card warning" style="cursor:pointer" id="cardIssues">
+      <span>IDS RULE ISSUES (CLICK)</span>
+      <strong id="issuesTotalCount">0</strong>
+      <span id="issuesTeamSub">By Team AR / ID / MEP / STR</span>
     </div>
   </div>
 
+  <!-- TAB 01: Model Explorer & QTO -->
   <section id="review">
-    <!-- Filter Panel -->
     <div class="panel">
       <div class="heading-row">
         <div>
@@ -238,12 +252,12 @@ dialog::backdrop{background:rgba(15,23,42,.55)}
 
       <div class="panel" style="margin-bottom:0">
         <div class="heading-row">
-          <h2>Models in Batch</h2>
+          <h2>Models, Versions &amp; Delta</h2>
           <span class="muted">Click row to isolate model</span>
         </div>
         <div class="table-wrap" style="max-height:310px">
           <table>
-            <thead><tr><th>Model File</th><th>Status</th><th>Elements</th></tr></thead>
+            <thead><tr><th>Model (Version)</th><th>View</th><th>Elements (Delta)</th></tr></thead>
             <tbody id="models"></tbody>
           </table>
         </div>
@@ -263,7 +277,6 @@ dialog::backdrop{background:rgba(15,23,42,.55)}
         </div>
       </div>
 
-      <!-- Dynamic Column Selector Drawer -->
       <div id="colPickerDrawer" class="col-picker">
         <div class="heading-row" style="margin-bottom:6px">
           <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
@@ -301,8 +314,122 @@ dialog::backdrop{background:rgba(15,23,42,.55)}
     </div>
   </section>
 
-  <!-- Error Log Tab -->
+  <!-- TAB 02: Completeness Heatmap & Value Quality Auditor -->
+  <section id="heatmap" class="hidden">
+    <div class="grid-2">
+      <div class="panel" style="margin-bottom:0">
+        <div class="heading-row">
+          <div>
+            <h2>Category x Parameter Completeness Heatmap</h2>
+            <p class="muted">Shows % of instances populated per category and active column. Click any cell to inspect missing elements in that category.</p>
+          </div>
+        </div>
+        <div class="table-wrap" style="max-height:520px">
+          <table>
+            <thead id="heatmapHead"></thead>
+            <tbody id="heatmapBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="panel" style="margin-bottom:0">
+        <div class="heading-row">
+          <div>
+            <h2>Value Consistency &amp; Distribution Auditor</h2>
+            <p class="muted">Spot inconsistent naming (e.g. "2HR" vs "2 HR") and click any value to filter elements.</p>
+          </div>
+          <select id="valAuditSelect" style="max-width:220px;margin:0"></select>
+        </div>
+        <div id="valDistributionChart" style="margin-top:10px"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- TAB 03: IDS Rules & Team Fix Queue (AR / ID / MEP / STR) -->
+  <section id="issues" class="hidden">
+    <div class="panel">
+      <div class="heading-row">
+        <div>
+          <h2>buildingSMART IDS Validation &amp; Team Action Queue (AR / ID / MEP / STR)</h2>
+          <p class="muted">Automated checks bound to ISO 19650 EIR requirements and duplicate Mark detection. Filter by Team Code to export fix packages for the Revit Fix Assistant.</p>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="button" id="btnExportIssuesCsv">Export Filtered Issues (CSV)</button>
+          <button class="button primary" id="btnExportFixJson">Export Team Fix Package (JSON for Revit)</button>
+        </div>
+      </div>
+
+      <div class="filters" style="grid-template-columns:repeat(4,1fr);margin-bottom:14px">
+        <label>Responsible Team Code
+          <select id="issueTeam">
+            <option value="">All Teams (AR / ID / MEP / STR)</option>
+            <option value="AR">AR - Architecture</option>
+            <option value="ID">ID - Interior Design</option>
+            <option value="MEP">MEP - Building Systems</option>
+            <option value="STR">STR - Structure</option>
+          </select>
+        </label>
+        <label>Severity
+          <select id="issueSeverity">
+            <option value="">All Severities</option>
+            <option value="High">High</option>
+            <option value="Medium">Medium</option>
+            <option value="Low">Low</option>
+          </select>
+        </label>
+        <label>IDS Rule / Requirement
+          <select id="issueRule"><option value="">All IDS Rules</option></select>
+        </label>
+        <label>Model
+          <select id="issueModel"><option value="">All Models</option></select>
+        </label>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Team</th>
+              <th>Severity</th>
+              <th>IDS Rule / EIR Req</th>
+              <th>Model / Element ID</th>
+              <th>Category / Family / Type</th>
+              <th>Parameter</th>
+              <th>Actual Value</th>
+              <th>Actionable Instruction</th>
+            </tr>
+          </thead>
+          <tbody id="issueRows"></tbody>
+        </table>
+      </div>
+      <div class="pager">
+        <span id="issueSummaryText" class="count-label"></span>
+        <div style="display:flex;align-items:center;gap:10px">
+          <button id="iprev" class="button">Previous</button>
+          <span id="ipage" style="font-weight:600"></span>
+          <button id="inext" class="button">Next</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- TAB 04: History Warehouse & Extraction Logs -->
   <section id="errors" class="hidden">
+    <div class="panel">
+      <div class="heading-row">
+        <div>
+          <h2>SQLite Warehouse Run History (Trend &amp; Burndown)</h2>
+          <p class="muted">Historical batch extractions stored in output/warehouse.sqlite for week-over-week tracking.</p>
+        </div>
+      </div>
+      <div class="table-wrap" style="max-height:260px">
+        <table>
+          <thead><tr><th>Run ID</th><th>Project</th><th>Timestamp (UTC)</th><th>Models</th><th>Total Elements</th><th>Total Parameters</th><th>Open IDS Issues</th></tr></thead>
+          <tbody id="historyRows"></tbody>
+        </table>
+      </div>
+    </div>
+
     <div class="panel">
       <div class="heading-row">
         <h2>Extraction Diagnostics &amp; Error Log</h2>
@@ -367,7 +494,8 @@ const PRESETS = {
   mep: ['Level','System Type','System Name','System Classification','Size','Overall Size','Diameter','Flow','Voltage','Apparent Load','Panel','Circuit Number']
 };
 
-let page=0, epage=0, total=0, etotal=0, rows=[], detailRows=[], overview,
+let page=0, epage=0, ipage=0, total=0, etotal=0, itotal=0,
+    rows=[], detailRows=[], currentIssueRows=[], overview,
     request=0, errorRequest=0, detailRequest=0,
     activeColumns=[], allAvailableParams=[],
     applied=new URLSearchParams(new FormData($('filters')));
@@ -384,10 +512,20 @@ function fail(e){
   $('error').classList.remove('hidden');
 }
 
-function badge(s){return '<span class="badge '+esc(s)+'">'+esc(s)+'</span>';}
+function badge(s){return '<span class="badge '+esc(String(s||'').toLowerCase())+'">'+esc(s)+'</span>';}
 
 function empty(cols,text='No matching records found for the current filter criteria.'){
   return '<tr><td colspan="'+cols+'" class="empty">'+text+'</td></tr>';
+}
+
+function switchTab(tabName){
+  document.querySelectorAll('[data-tab]').forEach(x=>x.classList.toggle('active',x.dataset.tab===tabName));
+  for(const sec of ['review','heatmap','issues','errors']){
+    $(sec).classList.toggle('hidden',sec!==tabName);
+  }
+  if(tabName==='heatmap') { loadHeatmap(); loadValueDistribution(); }
+  if(tabName==='issues') loadIssues();
+  if(tabName==='errors') loadErrors();
 }
 
 function renderColumnPills(){
@@ -472,7 +610,6 @@ async function load(){
     $('exportPage').disabled=!rows.length;
     $('exportAll').disabled=!rows.length;
 
-    // 1. Category Chart
     const maxCat=data.categories[0]?.count||1;
     $('chartCategories').innerHTML=data.categories.map((c,i)=>
       '<button class="bar" data-category="'+i+'" title="Filter by '+esc(c.category)+'">' +
@@ -488,7 +625,6 @@ async function load(){
       apply();
     });
 
-    // 2. Completeness Chart
     const comp = data.completeness || [];
     $('chartCompleteness').innerHTML = comp.map(c =>
       '<button class="bar" data-auditparam="'+esc(c.name)+'" title="'+fmt(c.filled)+' of '+fmt(c.total)+' elements populated ('+c.pct+'%). Click to filter elements missing '+esc(c.name)+'">' +
@@ -504,21 +640,15 @@ async function load(){
       apply();
     });
 
-    // 3. QTO Rollups
     const qto = data.qto || [];
     const areaRow = qto.find(q => String(q.name).toLowerCase() === 'area');
     const volRow = qto.find(q => String(q.name).toLowerCase() === 'volume');
-    const lenRow = qto.find(q => String(q.name).toLowerCase() === 'length');
 
     $('qtoArea').textContent = areaRow ? fmtDec(areaRow.total_value) + (areaRow.unit ? ' ' + areaRow.unit : '') : '0.00';
     $('qtoAreaSub').textContent = areaRow ? 'Across ' + fmt(areaRow.elem_count) + ' elements with Area' : 'No numeric Area in current filter';
 
     $('qtoVolume').textContent = volRow ? fmtDec(volRow.total_value) + (volRow.unit ? ' ' + volRow.unit : '') : '0.00';
     $('qtoVolumeSub').textContent = volRow ? 'Across ' + fmt(volRow.elem_count) + ' elements with Volume' : 'No numeric Volume in current filter';
-
-    if (lenRow) {
-      $('qtoLengthSub').textContent = 'Filtered Length Sum: ' + fmtDec(lenRow.total_value) + (lenRow.unit ? ' ' + lenRow.unit : '');
-    }
 
     document.querySelectorAll('[data-element]').forEach(tr=>{
       tr.onclick=()=>showDetail(rows[tr.dataset.element]);
@@ -534,6 +664,128 @@ async function load(){
   }
 }
 
+async function loadHeatmap(){
+  const p = new URLSearchParams(applied);
+  const cols = activeColumns.length ? activeColumns.slice(0, 8) : ['Level','Type Mark','Mark','Comments','Area','Volume','Material'];
+  p.set('columns', cols.join(','));
+  try {
+    const data = await api('heatmap', p);
+    const hCols = data.columns || [];
+    const cats = data.categories || [];
+    const cells = data.cells || [];
+
+    $('heatmapHead').innerHTML = '<tr><th>Category (Instances)</th>' + hCols.map(c => '<th style="text-align:center">'+esc(c)+'</th>').join('') + '</tr>';
+
+    const cellMap = new Map();
+    for (const c of cells) {
+      cellMap.set((c.category||'').toLowerCase() + '||' + (c.name||'').toLowerCase(), Number(c.filled||0));
+    }
+
+    $('heatmapBody').innerHTML = cats.map(catObj => {
+      const catName = catObj.category || '';
+      const catTotal = Number(catObj.total || 1);
+      const tds = hCols.map(colName => {
+        const filled = cellMap.get(catName.toLowerCase() + '||' + colName.toLowerCase()) || 0;
+        const pct = Math.round(100 * filled / catTotal);
+        const cls = pct >= 90 ? 'hm-high' : (pct >= 50 ? 'hm-mid' : 'hm-low');
+        return '<td><div class="hm-cell '+cls+'" data-hmcat="'+esc(catName)+'" data-hmcol="'+esc(colName)+'" title="'+fmt(filled)+' / '+fmt(catTotal)+' populated ('+pct+'%). Click to filter missing elements.">'+pct+'%</div></td>';
+      }).join('');
+      return '<tr><td><b>'+esc(catName)+'</b> <span class="muted">('+fmt(catTotal)+')</span></td>' + tds + '</tr>';
+    }).join('') || empty(hCols.length + 1, 'No instance categories available.');
+
+    document.querySelectorAll('[data-hmcat]').forEach(el => {
+      el.onclick = () => {
+        $('category').value = el.dataset.hmcat;
+        $('parameterInput').value = el.dataset.hmcol;
+        $('missing').value = '1';
+        $('value').disabled = true;
+        switchTab('review');
+        apply();
+      };
+    });
+  } catch (e) { fail(e); }
+}
+
+async function loadValueDistribution(){
+  const targetParam = $('valAuditSelect').value || 'Type Mark';
+  const p = new URLSearchParams(applied);
+  p.set('targetParam', targetParam);
+  try {
+    const data = await api('values', p);
+    const dist = data.distribution || [];
+    const maxV = dist[0]?.count || 1;
+    $('valDistributionChart').innerHTML = dist.map(d =>
+      '<button class="bar" data-fval="'+esc(d.val)+'" title="Click to filter elements where '+esc(targetParam)+' = '+esc(d.val)+'">' +
+      '<span>'+esc(d.val)+'</span>' +
+      '<span class="track"><span class="fill completeness" style="display:block;width:'+(100*d.count/maxV)+'%"></span></span>' +
+      '<b>'+fmt(d.count)+'</b></button>'
+    ).join('') || '<p class="empty">No populated values for '+esc(targetParam)+'</p>';
+
+    document.querySelectorAll('[data-fval]').forEach(b => {
+      b.onclick = () => {
+        $('parameterInput').value = targetParam;
+        $('missing').value = '0';
+        $('value').disabled = false;
+        $('value').value = b.dataset.fval;
+        switchTab('review');
+        apply();
+      };
+    });
+  } catch (e) { fail(e); }
+}
+
+async function loadIssues(){
+  try {
+    const p = new URLSearchParams({
+      discipline: $('issueTeam').value,
+      severity: $('issueSeverity').value,
+      rule: $('issueRule').value,
+      model: $('issueModel').value,
+      page: ipage
+    });
+    const d = await api('issues', p);
+    itotal = Number(d.total || 0);
+    currentIssueRows = d.rows || [];
+
+    if ($('issueRule').options.length <= 1 && d.byRule?.length) {
+      for (const r of d.byRule) {
+        $('issueRule').add(new Option(r.rule_id + ' (' + r.discipline + ' - ' + fmt(r.count) + ')', r.rule_id));
+      }
+    }
+
+    $('issueSummaryText').textContent = fmt(itotal) + ' IDS rule issue(s) matching filter';
+    $('issueRows').innerHTML = currentIssueRows.map(r =>
+      '<tr class="selectable" data-issuemodel="'+r.model_id+'" data-issueelem="'+r.element_id+'" data-issuecat="'+esc(r.category)+'" data-issuefam="'+esc(r.family)+'" data-issuetyp="'+esc(r.type_name)+'" data-issueuid="'+esc(r.unique_id)+'" data-issuepath="'+esc(r.path)+'">' +
+      '<td><span class="badge team">'+esc(r.discipline)+'</span></td>' +
+      '<td>'+badge(r.severity)+'</td>' +
+      '<td><b>'+esc(r.rule_id)+'</b><br><span class="mono muted">'+esc(r.requirement_id)+'</span></td>' +
+      '<td>'+esc(base(r.path))+'<br><b class="mono">'+esc(r.element_id)+'</b></td>' +
+      '<td>'+esc(r.category)+'<br><span class="muted">'+esc(r.family)+' : '+esc(r.type_name)+'</span></td>' +
+      '<td><b>'+esc(r.parameter_name)+'</b></td>' +
+      '<td class="mono">'+esc(r.actual_value)+'</td>' +
+      '<td style="white-space:normal;max-width:340px">'+esc(r.message)+'</td>' +
+      '</tr>'
+    ).join('') || empty(8, 'All elements pass the selected buildingSMART IDS specifications.');
+
+    $('ipage').textContent = 'Page ' + (ipage + 1) + ' of ' + Math.max(1, Math.ceil(itotal / 100));
+    $('iprev').disabled = ipage === 0;
+    $('inext').disabled = (ipage + 1) * 100 >= itotal;
+
+    document.querySelectorAll('[data-issueelem]').forEach(tr => {
+      tr.onclick = () => showDetail({
+        model_id: tr.dataset.issuemodel,
+        element_id: tr.dataset.issueelem,
+        category: tr.dataset.issuecat,
+        family: tr.dataset.issuefam,
+        type_name: tr.dataset.issuetyp,
+        unique_id: tr.dataset.issueuid,
+        path: tr.dataset.issuepath,
+        kind: 'instance'
+      });
+    });
+  } catch (e) { fail(e); }
+}
+
 function apply(){
   page=0;
   applied=new URLSearchParams(new FormData($('filters')));
@@ -543,8 +795,8 @@ function apply(){
 
 async function showDetail(r){
   const id=++detailRequest;
-  $('detailTitle').textContent=(r.category ? r.category + ' • ' : '') + r.family + ' / ' + r.type_name;
-  $('detailMeta').textContent=base(r.path)+' • Element ID: '+r.element_id+' • UniqueId: '+r.unique_id+' • Kind: '+r.kind;
+  $('detailTitle').textContent=(r.category ? r.category + ' - ' : '') + r.family + ' / ' + r.type_name;
+  $('detailMeta').textContent=base(r.path)+' | Element ID: '+r.element_id+' | UniqueId: '+r.unique_id+' | Kind: '+r.kind;
   $('detailSearch').value='';
   $('detailRows').innerHTML=empty(5,'Loading element parameters...');
   $('detail').showModal();
@@ -567,7 +819,7 @@ function renderDetail(){
       '<td><b>'+esc(p.name)+'</b><br><span class="mono muted">'+esc(p.parameter_key)+'</span></td>' +
       '<td>'+esc(p.has_value?p.display_value:'(empty)')+'</td>' +
       '<td class="mono">'+esc(p.raw_value)+'</td>' +
-      '<td class="mono">'+esc(p.unit_type_id||'')+(p.unit_type_id?' • ':'')+esc(p.storage_type)+'</td>' +
+      '<td class="mono">'+esc(p.unit_type_id||'')+(p.unit_type_id?' | ':'')+esc(p.storage_type)+'</td>' +
       '</tr>').join('')||empty(5);
 }
 
@@ -578,14 +830,13 @@ async function loadErrors(){
     if(id!==errorRequest)return;
     etotal=d.total[0]?.count||0;
     $('errorRows').innerHTML=d.rows.map(r=>'<tr><td>'+esc(r.utc)+'<br>'+esc(base(r.path||'Batch'))+'</td><td>'+esc(r.element_id??'-')+'</td><td>'+esc(r.stage)+'</td><td><b>'+esc(r.exception_type)+'</b><br>'+esc(r.message)+'</td></tr>').join('')||empty(4,'No extraction errors logged.');
-    $('epage').textContent=fmt(etotal)+' record(s) • Page '+(epage+1)+' of '+Math.max(1,Math.ceil(etotal/100));
+    $('epage').textContent=fmt(etotal)+' record(s) | Page '+(epage+1)+' of '+Math.max(1,Math.ceil(etotal/100));
     $('eprev').disabled=!epage;
     $('enext').disabled=(epage+1)*100>=etotal;
   }catch(e){fail(e);}
 }
 
 function exportRowsToCsv(dataset, filename){
-  const coreKeys=['path','model_id','element_id','unique_id','kind','category','family','type_name','name'];
   const headerNames=['ModelName','ModelId','ElementId','UniqueId','Kind','Category','Family','TypeName','ElementName',...activeColumns];
 
   const cell=v=>{
@@ -614,12 +865,8 @@ function exportRowsToCsv(dataset, filename){
   setTimeout(()=>URL.revokeObjectURL(u),1000);
 }
 
-document.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>{
-  document.querySelectorAll('[data-tab]').forEach(x=>x.classList.toggle('active',x===b));
-  $('review').classList.toggle('hidden',b.dataset.tab!=='review');
-  $('errors').classList.toggle('hidden',b.dataset.tab!=='errors');
-  if(b.dataset.tab==='errors')loadErrors();
-});
+document.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>switchTab(b.dataset.tab));
+$('cardIssues').onclick=()=>switchTab('issues');
 
 document.querySelectorAll('[data-preset]').forEach(btn => {
   btn.onclick = () => {
@@ -642,6 +889,50 @@ document.querySelectorAll('[data-preset]').forEach(btn => {
 $('btnToggleCols').onclick = () => $('colPickerDrawer').classList.toggle('hidden');
 $('colSearch').oninput = renderColumnPills;
 $('btnClearCols').onclick = () => { activeColumns = []; renderColumnPills(); load(); };
+$('valAuditSelect').onchange = loadValueDistribution;
+
+for (const id of ['issueTeam','issueSeverity','issueRule','issueModel']) {
+  $(id).onchange = () => { ipage = 0; loadIssues(); };
+}
+$('iprev').onclick = () => { ipage--; loadIssues(); };
+$('inext').onclick = () => { ipage++; loadIssues(); };
+
+$('btnExportIssuesCsv').onclick = async () => {
+  const p = new URLSearchParams({
+    discipline: $('issueTeam').value,
+    severity: $('issueSeverity').value,
+    rule: $('issueRule').value,
+    model: $('issueModel').value,
+    limit: 5000
+  });
+  const d = await api('issues', p);
+  const cell=v=>'"'+String(v??'').replaceAll('"','""')+'"';
+  const hdr = ['Discipline','Severity','RuleId','RequirementId','Model','ElementId','UniqueId','Category','Family','TypeName','Parameter','ActualValue','Message'];
+  const lines = [hdr.join(','), ...(d.rows||[]).map(r=>[r.discipline,r.severity,r.rule_id,r.requirement_id,base(r.path),r.element_id,r.unique_id,r.category,r.family,r.type_name,r.parameter_name,r.actual_value,r.message].map(cell).join(','))];
+  const u=URL.createObjectURL(new Blob(['\ufeff'+lines.join('\r\n')],{type:'text/csv;charset=utf-8'}));
+  const a=document.createElement('a'); a.href=u; a.download='ids-issues-'+($('issueTeam').value||'ALL')+'.csv'; a.click();
+};
+
+$('btnExportFixJson').onclick = async () => {
+  const team = $('issueTeam').value || 'ALL';
+  const p = new URLSearchParams({
+    discipline: $('issueTeam').value,
+    severity: $('issueSeverity').value,
+    rule: $('issueRule').value,
+    model: $('issueModel').value,
+    limit: 5000
+  });
+  const d = await api('issues', p);
+  const payload = JSON.stringify({
+    schema: 'RBDE-RevitFixPackage-v1',
+    teamCode: team,
+    exportedUtc: new Date().toISOString(),
+    issueCount: (d.rows||[]).length,
+    issues: d.rows || []
+  }, null, 2);
+  const u=URL.createObjectURL(new Blob([payload],{type:'application/json'}));
+  const a=document.createElement('a'); a.href=u; a.download='revit-fix-package-'+team+'.json'; a.click();
+};
 
 $('filters').onsubmit=e=>{e.preventDefault();apply()};
 $('reset').onclick=()=>{$('filters').reset();$('value').disabled=false;apply()};
@@ -682,17 +973,36 @@ $('exportAll').onclick=async()=>{
     $('run').textContent='Batch Run: '+overview.run;
     $('modelsCount').textContent=fmt(overview.models.length);
     const ok=overview.models.filter(m=>m.status==='succeeded').length;
-    $('successCount').textContent=fmt(ok)+' succeeded • '+fmt(overview.models.length-ok)+' with issues';
+    $('successCount').textContent=fmt(ok)+' succeeded | '+fmt(overview.models.length-ok)+' with issues';
     $('instancesCount').textContent=fmt(overview.totals.find(t=>t.kind==='instance')?.count||0);
     $('typesCount').textContent=fmt(overview.totals.find(t=>t.kind==='type')?.count||0)+' Type records extracted';
 
+    // Coverage banner
+    const viewList = overview.models.map(m => base(m.path) + ' [' + (m.view_name || '{3D}') + ']').join(', ');
+    $('coverageText').textContent = 'Extracted View Scope: ' + (viewList || '3D View');
+
+    // IDS Issue Summary
+    const issSum = overview.issueSummary || [];
+    const totalIss = issSum.reduce((acc, x) => acc + Number(x.count || 0), 0);
+    $('issuesTotalCount').textContent = fmt(totalIss);
+    const byTeam = {};
+    for (const x of issSum) {
+      byTeam[x.discipline] = (byTeam[x.discipline] || 0) + Number(x.count || 0);
+    }
+    const teamParts = Object.entries(byTeam).map(([k,v]) => k + ': ' + fmt(v));
+    $('issuesTeamSub').textContent = teamParts.length ? teamParts.join(' | ') : '0 issues (All rules passed)';
+
+    // History table
+    const hRuns = overview.historyRuns || [];
+    $('historyRows').innerHTML = hRuns.map(hr =>
+      '<tr><td class="mono"><b>'+esc(hr.run_id)+'</b></td><td>'+esc(hr.project_name)+'</td><td>'+esc(hr.started_utc)+'</td><td>'+fmt(hr.model_count)+'</td><td>'+fmt(hr.element_count)+'</td><td>'+fmt(hr.parameter_count)+'</td><td><b>'+fmt(hr.issue_count)+'</b></td></tr>'
+    ).join('') || empty(7, 'No prior runs recorded in warehouse.sqlite yet.');
+
     allAvailableParams = overview.availableParameters || [];
-    $('paramsCount').textContent = fmt(allAvailableParams.length);
 
-    // Populate datalist for Parameter filter
     $('paramList').innerHTML = allAvailableParams.map(p => '<option value="'+esc(p.name)+'">Populated on '+fmt(p.elem_count)+' elements</option>').join('');
+    $('valAuditSelect').innerHTML = allAvailableParams.map(p => '<option value="'+esc(p.name)+'">'+esc(p.name)+' ('+fmt(p.elem_count)+')</option>').join('');
 
-    // Initialize active dynamic columns from priorityColumns that actually exist in the extracted dataset
     const availMap = new Map(allAvailableParams.map(p => [p.name.toLowerCase(), p.name]));
     const prio = (overview.priorityColumns || [])
       .map(c => availMap.get(c.toLowerCase()))
@@ -702,7 +1012,7 @@ $('exportAll').onclick=async()=>{
     renderColumnPills();
 
     for(const m of overview.models){
-      for(const id of ['model','errorModel'])
+      for(const id of ['model','errorModel','issueModel'])
         $(id).add(new Option(base(m.path)+' (ID '+m.model_id+')',m.model_id));
     }
     for(const c of overview.categories)
@@ -711,12 +1021,14 @@ $('exportAll').onclick=async()=>{
     for(const lv of (overview.levels || []))
       if(lv.level) $('level').add(new Option(lv.level + ' (' + fmt(lv.count) + ')', lv.level));
 
-    $('models').innerHTML=overview.models.map(m=>
-      '<tr class="selectable" tabindex="0" data-model="'+m.model_id+'">' +
-      '<td title="'+esc(m.path)+'">'+esc(base(m.path))+'</td>' +
-      '<td>'+badge(m.status)+'</td>' +
-      '<td>'+fmt(m.element_count)+'</td></tr>'
-    ).join('');
+    $('models').innerHTML=overview.models.map(m=>{
+      const d = Number(m.delta_elements || 0);
+      const dStr = d > 0 ? ' (+'+fmt(d)+')' : (d < 0 ? ' ('+fmt(d)+')' : '');
+      return '<tr class="selectable" tabindex="0" data-model="'+m.model_id+'">' +
+        '<td title="'+esc(m.path)+'">'+esc(base(m.path))+'</td>' +
+        '<td><span class="mono muted">'+esc(m.view_name||'{3D}')+'</span></td>' +
+        '<td>'+fmt(m.element_count)+'<span class="muted">'+esc(dStr)+'</span></td></tr>';
+    }).join('');
 
     document.querySelectorAll('[data-model]').forEach(tr=>{
       tr.onclick=()=>{$('model').value=tr.dataset.model;apply()};

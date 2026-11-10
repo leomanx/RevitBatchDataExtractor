@@ -3,8 +3,10 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -21,6 +23,9 @@ public sealed class ModelFileItem
     public string Id { get; set; } = "";
     public string Name { get; set; } = "";
     public string VersionId { get; set; } = "";
+    public int VersionNumber { get; set; } = 1;
+    public string ViewName { get; set; } = "";
+    public string DerivativeUrn { get; set; } = "";
     public bool IsSelected { get; set; } = true;
     public string Status { get; set; } = "Ready";
 }
@@ -34,6 +39,7 @@ public sealed class CategoryOptionItem
 
 public sealed record ExtractedElement(
     long ElementId,
+    int ObjectId,
     string UniqueId,
     string Kind,
     string Category,
@@ -153,7 +159,7 @@ public static class AecSchemaPresets
             "Area", "Volume", "Length", "Width", "Overall Width", "Height",
             "Unconnected Height", "Limit Offset", "Thickness", "Depth",
             "Perimeter", "Count", "Slope", "Angle", "Cut Length",
-            "TotaltersonWeight", "Weight", "Exact Weight"
+            "Weight", "Exact Weight"
         ],
         ["Materials"] =
         [
@@ -191,6 +197,11 @@ public static class AecSchemaPresets
 public sealed class ApsClient
 {
     private const string BaseUrl = "https://developer.api.autodesk.com";
+    private static readonly byte[] DpapiEntropy = Encoding.UTF8.GetBytes("RBDE.CloudApp.ApsSecret.v1");
+    private static readonly string CredentialStorePath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "MMK_BIM", "RBDE", "credentials.dpapi.json");
+
     private static readonly Regex NumericUnitRegex = new(
         @"^\s*([+-]?\d+(?:\.\d+)?)\s*([a-zA-Z°%²³\^0-9/_-]+)?\s*$",
         RegexOptions.Compiled);
@@ -198,11 +209,11 @@ public sealed class ApsClient
     private readonly HttpClient http = new() { Timeout = TimeSpan.FromMinutes(3) };
     private string? token;
     private DateTime tokenExpiry = DateTime.MinValue;
+    private string? clientSecret;
 
     public string? ClientId { get; private set; }
-    public string? ClientSecret { get; private set; }
 
-    public bool HasCredentials => !string.IsNullOrWhiteSpace(ClientId) && !string.IsNullOrWhiteSpace(ClientSecret);
+    public bool HasCredentials => !string.IsNullOrWhiteSpace(ClientId) && !string.IsNullOrWhiteSpace(clientSecret);
 
     public ApsClient()
     {
@@ -211,25 +222,94 @@ public sealed class ApsClient
 
     public void ReloadCredentials()
     {
-        ClientId = Environment.GetEnvironmentVariable("APS_CLIENT_ID", EnvironmentVariableTarget.Process)
-            ?? Environment.GetEnvironmentVariable("APS_CLIENT_ID", EnvironmentVariableTarget.User);
-        ClientSecret = Environment.GetEnvironmentVariable("APS_CLIENT_SECRET", EnvironmentVariableTarget.Process)
-            ?? Environment.GetEnvironmentVariable("APS_CLIENT_SECRET", EnvironmentVariableTarget.User);
         token = null;
         tokenExpiry = DateTime.MinValue;
+
+        // 1. Check DPAPI encrypted store first
+        if (File.Exists(CredentialStorePath))
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(File.ReadAllText(CredentialStorePath));
+                ClientId = doc.RootElement.TryGetProperty("clientId", out var cid) ? cid.GetString() : null;
+                if (doc.RootElement.TryGetProperty("encryptedSecret", out var enc) && !string.IsNullOrWhiteSpace(enc.GetString()))
+                {
+                    var cipherBytes = Convert.FromBase64String(enc.GetString()!);
+                    var plainBytes = ProtectedData.Unprotect(cipherBytes, DpapiEntropy, DataProtectionScope.CurrentUser);
+                    clientSecret = Encoding.UTF8.GetString(plainBytes);
+                }
+            }
+            catch
+            {
+                // Fallback to environment variables if store is unreadable
+            }
+        }
+
+        // 2. Check environment variables and auto-migrate plaintext User secret into DPAPI store
+        var envId = Environment.GetEnvironmentVariable("APS_CLIENT_ID", EnvironmentVariableTarget.Process)
+            ?? Environment.GetEnvironmentVariable("APS_CLIENT_ID", EnvironmentVariableTarget.User);
+        var userPlainSecret = Environment.GetEnvironmentVariable("APS_CLIENT_SECRET", EnvironmentVariableTarget.User);
+        var procPlainSecret = Environment.GetEnvironmentVariable("APS_CLIENT_SECRET", EnvironmentVariableTarget.Process);
+
+        if (string.IsNullOrWhiteSpace(ClientId) && !string.IsNullOrWhiteSpace(envId))
+        {
+            ClientId = envId.Trim();
+        }
+
+        var activePlainSecret = !string.IsNullOrWhiteSpace(userPlainSecret) ? userPlainSecret : procPlainSecret;
+        if (!string.IsNullOrWhiteSpace(activePlainSecret))
+        {
+            clientSecret = activePlainSecret.Trim();
+            if (!string.IsNullOrWhiteSpace(ClientId))
+            {
+                PersistEncryptedCredentials(ClientId, clientSecret);
+            }
+        }
     }
 
-    public void SaveCredentials(string newClientId, string newClientSecret)
+    public void SaveCredentials(string newClientId, string? newClientSecretIfChanged)
     {
         ClientId = newClientId.Trim();
-        ClientSecret = newClientSecret.Trim();
+        if (!string.IsNullOrWhiteSpace(newClientSecretIfChanged))
+        {
+            clientSecret = newClientSecretIfChanged.Trim();
+        }
+
+        if (string.IsNullOrWhiteSpace(clientSecret))
+        {
+            throw new InvalidOperationException("Client Secret is required.");
+        }
+
         token = null;
         tokenExpiry = DateTime.MinValue;
 
-        Environment.SetEnvironmentVariable("APS_CLIENT_ID", ClientId, EnvironmentVariableTarget.User);
-        Environment.SetEnvironmentVariable("APS_CLIENT_SECRET", ClientSecret, EnvironmentVariableTarget.User);
-        Environment.SetEnvironmentVariable("APS_CLIENT_ID", ClientId, EnvironmentVariableTarget.Process);
-        Environment.SetEnvironmentVariable("APS_CLIENT_SECRET", ClientSecret, EnvironmentVariableTarget.Process);
+        PersistEncryptedCredentials(ClientId, clientSecret);
+    }
+
+    private static void PersistEncryptedCredentials(string id, string secret)
+    {
+        var dir = Path.GetDirectoryName(CredentialStorePath)!;
+        Directory.CreateDirectory(dir);
+
+        var plainBytes = Encoding.UTF8.GetBytes(secret);
+        var cipherBytes = ProtectedData.Protect(plainBytes, DpapiEntropy, DataProtectionScope.CurrentUser);
+        var payload = JsonSerializer.Serialize(new
+        {
+            clientId = id,
+            encryptedSecret = Convert.ToBase64String(cipherBytes),
+            protection = "Windows-DPAPI-CurrentUser",
+            updatedUtc = DateTime.UtcNow.ToString("O")
+        }, new JsonSerializerOptions { WriteIndented = true });
+
+        File.WriteAllText(CredentialStorePath, payload, Encoding.UTF8);
+
+        // Scrub any plaintext secret from Windows User Environment Variables
+        if (Environment.GetEnvironmentVariable("APS_CLIENT_SECRET", EnvironmentVariableTarget.User) != null)
+        {
+            Environment.SetEnvironmentVariable("APS_CLIENT_SECRET", null, EnvironmentVariableTarget.User);
+        }
+        Environment.SetEnvironmentVariable("APS_CLIENT_SECRET", null, EnvironmentVariableTarget.Process);
+        Environment.SetEnvironmentVariable("APS_CLIENT_ID", id, EnvironmentVariableTarget.User);
     }
 
     public async Task<string> EnsureTokenAsync()
@@ -238,7 +318,7 @@ public sealed class ApsClient
         if (!HasCredentials)
             throw new InvalidOperationException("APS credentials not configured. Please set Client ID and Client Secret in Settings.");
 
-        var basic = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{ClientId}:{ClientSecret}"));
+        var basic = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{ClientId}:{clientSecret}"));
         using var req = new HttpRequestMessage(HttpMethod.Post, $"{BaseUrl}/authentication/v2/token");
         req.Headers.Authorization = new AuthenticationHeaderValue("Basic", basic);
         req.Content = new FormUrlEncodedContent(new Dictionary<string, string>
@@ -263,17 +343,36 @@ public sealed class ApsClient
 
     private async Task<JsonDocument> GetJsonAsync(string uri)
     {
-        var tok = await EnsureTokenAsync();
-        using var req = new HttpRequestMessage(HttpMethod.Get, uri);
-        req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", tok);
-        req.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-        using var resp = await http.SendAsync(req);
-        if (!resp.IsSuccessStatusCode)
+        int maxAttempts = 4;
+        for (int attempt = 1; attempt <= maxAttempts; attempt++)
         {
+            var tok = await EnsureTokenAsync();
+            using var req = new HttpRequestMessage(HttpMethod.Get, uri);
+            req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", tok);
+            req.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+            using var resp = await http.SendAsync(req);
+
+            if (resp.IsSuccessStatusCode)
+            {
+                return JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
+            }
+
+            bool isTransient = resp.StatusCode == HttpStatusCode.TooManyRequests ||
+                               resp.StatusCode == HttpStatusCode.Accepted ||
+                               (int)resp.StatusCode >= 500;
+
+            if (isTransient && attempt < maxAttempts)
+            {
+                var delaySec = resp.Headers.RetryAfter?.Delta?.TotalSeconds ?? Math.Pow(2, attempt);
+                await Task.Delay(TimeSpan.FromSeconds(Math.Clamp(delaySec, 1, 15)));
+                continue;
+            }
+
             var err = await resp.Content.ReadAsStringAsync();
             throw new HttpRequestException($"API request failed (HTTP {(int)resp.StatusCode}): {err}");
         }
-        return JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
+
+        throw new HttpRequestException($"API request exceeded retry attempts: {uri}");
     }
 
     public async Task<List<HubItem>> GetHubsAsync()
@@ -365,11 +464,17 @@ public sealed class ApsClient
             if (!name.EndsWith(".rvt", StringComparison.OrdinalIgnoreCase)) continue;
 
             var tipVersionId = item.GetProperty("relationships").GetProperty("tip").GetProperty("data").GetProperty("id").GetString()!;
+            int vNum = 1;
+            var vIdx = tipVersionId.IndexOf("version=", StringComparison.OrdinalIgnoreCase);
+            if (vIdx >= 0 && int.TryParse(tipVersionId.AsSpan(vIdx + 8), out var parsedV))
+                vNum = parsedV;
+
             list.Add(new ModelFileItem
             {
                 Id = item.GetProperty("id").GetString()!,
-                Name = name,
+                Name = $"{name} (v{vNum})",
                 VersionId = tipVersionId,
+                VersionNumber = vNum,
                 IsSelected = true
             });
         }
@@ -437,6 +542,10 @@ public sealed class ApsClient
 
     private static JsonElement SelectBestView(List<JsonElement> metaList)
     {
+        var qaView = metaList.FirstOrDefault(m => m.GetProperty("role").GetString() == "3d" &&
+            m.GetProperty("name").GetString()!.Contains("RBDE_QA_3D", StringComparison.OrdinalIgnoreCase));
+        if (qaView.ValueKind != JsonValueKind.Undefined) return qaView;
+
         var v3d = metaList.FirstOrDefault(m => m.GetProperty("role").GetString() == "3d" &&
             (m.GetProperty("name").GetString()!.Contains("New Construction", StringComparison.OrdinalIgnoreCase) ||
              m.GetProperty("name").GetString()!.Contains("{3D}", StringComparison.OrdinalIgnoreCase)));
@@ -463,6 +572,7 @@ public sealed class ApsClient
         var escVersion = Uri.EscapeDataString(model.VersionId);
         using var vDoc = await GetJsonAsync($"{BaseUrl}/data/v1/projects/{projectId}/versions/{escVersion}");
         var urn = vDoc.RootElement.GetProperty("data").GetProperty("relationships").GetProperty("derivatives").GetProperty("data").GetProperty("id").GetString()!;
+        model.DerivativeUrn = urn;
 
         // 2. Select 3D View
         using var metaDoc = await GetJsonAsync($"{BaseUrl}/modelderivative/v2/designdata/{urn}/metadata");
@@ -470,7 +580,9 @@ public sealed class ApsClient
         var v3d = SelectBestView(metaList);
 
         var guid = v3d.GetProperty("guid").GetString()!;
-        log($"[{model.Name}] Querying metadata view: '{v3d.GetProperty("name").GetString()}'...");
+        var viewName = v3d.GetProperty("name").GetString() ?? "{3D}";
+        model.ViewName = viewName;
+        log($"[{model.Name}] Querying metadata view: '{viewName}' (v{model.VersionNumber})...");
 
         // 3. Fetch Tree & Properties in parallel
         var treeTask = GetJsonAsync($"{BaseUrl}/modelderivative/v2/designdata/{urn}/metadata/{guid}");
@@ -562,6 +674,7 @@ public sealed class ApsClient
 
                 elements.Add(new ExtractedElement(
                     revitId,
+                    id,
                     extId,
                     meta.kind,
                     meta.cat,

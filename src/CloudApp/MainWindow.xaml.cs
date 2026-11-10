@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Text.Json;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
@@ -13,12 +14,26 @@ using Microsoft.Data.Sqlite;
 
 namespace RBDE.CloudApp;
 
+public sealed class ScheduledProfile
+{
+    public string HubId { get; set; } = "";
+    public string ProjectId { get; set; } = "";
+    public string ProjectName { get; set; } = "";
+    public string FolderId { get; set; } = "";
+    public string FolderName { get; set; } = "";
+    public bool ExtractAllCategories { get; set; } = true;
+    public List<string> Categories { get; set; } = [];
+    public bool ExtractAllParameters { get; set; } = true;
+    public List<string> PriorityColumns { get; set; } = [];
+}
+
 public partial class MainWindow : Window
 {
     private readonly ApsClient aps = new();
     private readonly string baseDir;
     private readonly string dashScript;
     private readonly string outputRoot;
+    private readonly string rulesPath;
     private List<ModelFileItem> currentModels = [];
     private readonly List<CategoryOptionItem> categoryOptions = [];
     private bool suppressPresetEvent;
@@ -37,6 +52,7 @@ public partial class MainWindow : Window
         baseDir = dir?.FullName ?? @"E:\Work\BIM\scripts\Dynamo\RevitBatchDataExtractor";
         dashScript = Path.Combine(baseDir, "Open-Dashboard.ps1");
         outputRoot = Path.Combine(baseDir, "output");
+        rulesPath = Path.Combine(baseDir, "rules.ids.json");
 
         InitializeSchemaControls();
         Loaded += MainWindow_Loaded;
@@ -142,10 +158,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private void ChkExtractAllCategories_Changed(object sender, RoutedEventArgs e)
-    {
-        UpdateCategorySummary();
-    }
+    private void ChkExtractAllCategories_Changed(object sender, RoutedEventArgs e) => UpdateCategorySummary();
 
     private void CategoryItem_Changed(object sender, RoutedEventArgs e)
     {
@@ -253,10 +266,19 @@ public partial class MainWindow : Window
     private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
     {
         var cmdArgs = Environment.GetCommandLineArgs();
+
         var capIdx = Array.IndexOf(cmdArgs, "--capture-docs");
         if (capIdx >= 0 && capIdx + 1 < cmdArgs.Length)
         {
             await CaptureDocumentationScreenshotsAsync(cmdArgs[capIdx + 1]);
+            Application.Current.Shutdown();
+            return;
+        }
+
+        var batchIdx = Array.IndexOf(cmdArgs, "--headless-batch");
+        if (batchIdx >= 0 && batchIdx + 1 < cmdArgs.Length)
+        {
+            await RunHeadlessScheduledBatchAsync(cmdArgs[batchIdx + 1]);
             Application.Current.Shutdown();
             return;
         }
@@ -268,6 +290,30 @@ public partial class MainWindow : Window
         }
 
         await InitializeHubConnectionAsync();
+    }
+
+    private async Task RunHeadlessScheduledBatchAsync(string profilePath)
+    {
+        if (!File.Exists(profilePath)) return;
+        var profile = JsonSerializer.Deserialize<ScheduledProfile>(await File.ReadAllTextAsync(profilePath));
+        if (profile == null) return;
+
+        var models = await aps.GetRvtModelsAsync(profile.ProjectId, profile.FolderId);
+        if (models.Count == 0) return;
+
+        var categories = new HashSet<string>(profile.Categories, StringComparer.OrdinalIgnoreCase);
+        var targetParams = BuildTargetParameterSet(profile.PriorityColumns);
+
+        await ExecuteBatchExtractionAsync(
+            profile.ProjectId,
+            profile.ProjectName,
+            models,
+            profile.ExtractAllCategories,
+            categories,
+            profile.ExtractAllParameters,
+            targetParams,
+            profile.PriorityColumns,
+            isHeadless: true);
     }
 
     private async Task CaptureDocumentationScreenshotsAsync(string outDir)
@@ -290,37 +336,33 @@ public partial class MainWindow : Window
         CmbFolders.SelectedItem = demoFolder;
 
         TxtHubName.Text = "Hub: ACC Enterprise Hub";
-        TxtStatusBadge.Text = "Connected (2LO)";
+        TxtStatusBadge.Text = "Connected (DPAPI Secured)";
 
         currentModels =
         [
-            new ModelFileItem { Id = "1", Name = "ARC_Main_Tower_R26.rvt", IsSelected = true, Status = "Done (17,425 el / 84,620 pr)" },
-            new ModelFileItem { Id = "2", Name = "STR_Superstructure_R26.rvt", IsSelected = true, Status = "Done (8,912 el / 41,205 pr)" },
-            new ModelFileItem { Id = "3", Name = "MEP_HVAC_Piping_R26.rvt", IsSelected = true, Status = "Done (14,310 el / 68,110 pr)" },
-            new ModelFileItem { Id = "4", Name = "INT_Podium_Fitout_R26.rvt", IsSelected = true, Status = "Done (6,180 el / 29,400 pr)" },
-            new ModelFileItem { Id = "5", Name = "SITE_Landscape_Civil_R26.rvt", IsSelected = false, Status = "Ready" }
+            new ModelFileItem { Id = "1", Name = "ARC_Main_Tower_R26.rvt (v12)", IsSelected = true, Status = "Done (17,425 el / 84,620 pr)" },
+            new ModelFileItem { Id = "2", Name = "STR_Superstructure_R26.rvt (v8)", IsSelected = true, Status = "Done (8,912 el / 41,205 pr)" },
+            new ModelFileItem { Id = "3", Name = "MEP_HVAC_Piping_R26.rvt (v15)", IsSelected = true, Status = "Done (14,310 el / 68,110 pr)" },
+            new ModelFileItem { Id = "4", Name = "INT_Podium_Fitout_R26.rvt (v6)", IsSelected = true, Status = "Done (6,180 el / 29,400 pr)" },
+            new ModelFileItem { Id = "5", Name = "SITE_Landscape_Civil_R26.rvt (v3)", IsSelected = false, Status = "Ready" }
         ];
         LstModels.ItemsSource = currentModels;
         UpdateSelectedCount();
 
         ProgBatch.Maximum = 4;
         ProgBatch.Value = 4;
-        TxtProgressStatus.Text = "Extraction completed for 4 model(s) in 34.2s. Output saved to SQLite & elements_wide.csv.";
+        TxtProgressStatus.Text = "Extraction & IDS Rule Check completed for 4 model(s) in 34.2s. History saved to warehouse.sqlite.";
 
         TxtLog.Text = string.Join(Environment.NewLine,
-            "[10:15:02] Authenticating with Autodesk Platform Services (2-Legged OAuth)...",
+            "[10:15:02] Authenticating with Autodesk Platform Services (DPAPI Encrypted Secret)...",
             "[OK] Connected to Hub: ACC Enterprise Hub",
-            "[OK] Selected Project: 2026 Mixed-Use Tower Development | Folder: Project Files / 01_WIP_Models",
             "============================================================",
-            "[10:15:08] Initiating Batch Extraction (4 models)...",
-            "Category Scope   : ALL Model Categories (Architecture, Structure, MEP, Interior)",
-            "Priority Columns : Level, Base Constraint, Type Mark, Mark, Comments, Type Comments, Area, Volume, Length, Width, Height, Material, Fire Rating, Workset, Phase Created",
-            "============================================================",
-            ">>> [1/4] ARC_Main_Tower_R26.rvt -> View '{3D}' -> 17,425 elements, 84,620 parameter records (8.9s)",
-            ">>> [2/4] STR_Superstructure_R26.rvt -> View '{3D}' -> 8,912 elements, 41,205 parameter records (7.1s)",
-            ">>> [3/4] MEP_HVAC_Piping_R26.rvt -> View '{3D}' -> 14,310 elements, 68,110 parameter records (10.4s)",
-            ">>> [4/4] INT_Podium_Fitout_R26.rvt -> View '{3D}' -> 6,180 elements, 29,400 parameter records (6.2s)",
-            "[SUCCESS] Persisted extract.sqlite, elements_wide.csv, elements.csv, parameters.csv in 34.2s.");
+            ">>> [1/4] ARC_Main_Tower_R26.rvt (v12) -> View '{3D}' -> 17,425 elements, 84,620 parameters (8.9s)",
+            ">>> [2/4] STR_Superstructure_R26.rvt (v8) -> View '{3D}' -> 8,912 elements, 41,205 parameters (7.1s)",
+            ">>> [3/4] MEP_HVAC_Piping_R26.rvt (v15) -> View '{3D}' -> 14,310 elements, 68,110 parameters (10.4s)",
+            ">>> [4/4] INT_Podium_Fitout_R26.rvt (v6) -> View '{3D}' -> 6,180 elements, 29,400 parameters (6.2s)",
+            "[IDS QA/QC] Evaluated 7 buildingSMART IDS Specifications (Teams: AR, ID, MEP, STR).",
+            "[SUCCESS] Persisted extract.sqlite, warehouse.sqlite, elements_wide.csv, and fix_candidates.json.");
 
         await Task.Delay(350);
         UpdateLayout();
@@ -328,10 +370,9 @@ public partial class MainWindow : Window
         await Task.Delay(100);
         SaveWindowPng(Path.Combine(outDir, "cloud-extractor-main.png"));
 
-        // Now open the Settings Popup Modal with sanitized placeholder values
         TxtClientId.Text = "YOUR_APS_CLIENT_ID_HERE";
-        TxtClientSecret.Text = "************************************************";
-        TxtModalStatus.Text = "Enter your Server-to-Server Client ID and Secret to sync directly with your ACC Hub.";
+        PwdClientSecret.Password = "********************************";
+        TxtModalStatus.Text = "Secret is encrypted at rest using Windows DPAPI (CurrentUser scope). Plaintext environment variables are scrubbed automatically.";
         ModalSettings.Visibility = Visibility.Visible;
 
         await Task.Delay(250);
@@ -357,7 +398,7 @@ public partial class MainWindow : Window
     private async Task InitializeHubConnectionAsync()
     {
         TxtStatusBadge.Text = "Connecting...";
-        Log($"[{DateTime.Now:HH:mm:ss}] Authenticating with Autodesk Platform Services...");
+        Log($"[{DateTime.Now:HH:mm:ss}] Authenticating with Autodesk Platform Services (DPAPI Protected Store)...");
 
         try
         {
@@ -369,7 +410,7 @@ public partial class MainWindow : Window
             {
                 CmbHubs.SelectedItem = defaultHub;
                 TxtHubName.Text = $"Hub: {defaultHub.Name}";
-                TxtStatusBadge.Text = "Connected";
+                TxtStatusBadge.Text = "Connected (DPAPI)";
                 Log($"[OK] Connected to Hub: {defaultHub.Name} ({hubs.Count} hub(s) accessible)");
             }
             else
@@ -395,39 +436,43 @@ public partial class MainWindow : Window
     private void OpenSettingsModal(string? statusMessage = null)
     {
         TxtClientId.Text = aps.ClientId ?? "";
-        TxtClientSecret.Text = aps.ClientSecret ?? "";
-        TxtModalStatus.Text = statusMessage ?? "";
+        PwdClientSecret.Password = "";
+        TxtModalStatus.Text = statusMessage ?? (aps.HasCredentials
+            ? "Encrypted Client Secret is active in Windows DPAPI. Leave Secret blank to keep current, or type a new Secret to rotate."
+            : "Enter your APS Client ID and Client Secret. Secret will be encrypted via Windows DPAPI.");
         ModalSettings.Visibility = Visibility.Visible;
     }
 
     private void BtnCloseModal_Click(object sender, RoutedEventArgs e)
     {
+        PwdClientSecret.Password = "";
         ModalSettings.Visibility = Visibility.Collapsed;
     }
 
     private async void BtnSaveSync_Click(object sender, RoutedEventArgs e)
     {
         var id = TxtClientId.Text.Trim();
-        var secret = TxtClientSecret.Text.Trim();
+        var secret = PwdClientSecret.Password.Trim();
 
-        if (string.IsNullOrEmpty(id) || string.IsNullOrEmpty(secret))
+        if (string.IsNullOrEmpty(id) || (string.IsNullOrEmpty(secret) && !aps.HasCredentials))
         {
             TxtModalStatus.Text = "Both Client ID and Client Secret are required.";
             return;
         }
 
         BtnSaveSync.IsEnabled = false;
-        TxtModalStatus.Text = "Saving credentials and testing connection to Autodesk Platform Services...";
+        TxtModalStatus.Text = "Encrypting secret with Windows DPAPI and testing connection to APS...";
 
         try
         {
-            aps.SaveCredentials(id, secret);
+            aps.SaveCredentials(id, string.IsNullOrEmpty(secret) ? null : secret);
+            PwdClientSecret.Password = "";
             await aps.EnsureTokenAsync();
             TxtModalStatus.Text = "Authentication succeeded! Syncing Hubs and Projects...";
 
             await InitializeHubConnectionAsync();
-            TxtModalStatus.Text = "Connected successfully! Hubs and projects synchronized.";
-            await Task.Delay(800);
+            TxtModalStatus.Text = "Connected and encrypted successfully!";
+            await Task.Delay(700);
             ModalSettings.Visibility = Visibility.Collapsed;
         }
         catch (Exception ex)
@@ -517,10 +562,7 @@ public partial class MainWindow : Window
         TxtSelectedCount.Text = $"Selected: {selected} / {currentModels.Count} models";
     }
 
-    private void ModelCheck_Changed(object sender, RoutedEventArgs e)
-    {
-        UpdateSelectedCount();
-    }
+    private void ModelCheck_Changed(object sender, RoutedEventArgs e) => UpdateSelectedCount();
 
     private void BtnSelectAll_Click(object sender, RoutedEventArgs e)
     {
@@ -572,6 +614,79 @@ public partial class MainWindow : Window
         return set;
     }
 
+    private void BtnScheduleTask_Click(object sender, RoutedEventArgs e)
+    {
+        if (CmbHubs.SelectedItem is not HubItem hub ||
+            CmbProjects.SelectedItem is not ProjectItem proj ||
+            CmbFolders.SelectedItem is not FolderItem folder)
+        {
+            MessageBox.Show(this, "Please select a Hub, Project, and Folder before scheduling automatic extraction.", "Notice", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        var profileDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MMK_BIM", "RBDE");
+        Directory.CreateDirectory(profileDir);
+        var profilePath = Path.Combine(profileDir, "scheduled-profile.json");
+
+        var profile = new ScheduledProfile
+        {
+            HubId = hub.Id,
+            ProjectId = proj.Id,
+            ProjectName = proj.Name,
+            FolderId = folder.Id,
+            FolderName = folder.Name,
+            ExtractAllCategories = ChkExtractAllCategories.IsChecked == true,
+            Categories = categoryOptions.Where(c => c.IsSelected).Select(c => c.Name).ToList(),
+            ExtractAllParameters = ChkExtractAllParams.IsChecked == true,
+            PriorityColumns = ParsePriorityColumns()
+        };
+
+        File.WriteAllText(profilePath, JsonSerializer.Serialize(profile, new JsonSerializerOptions { WriteIndented = true }), Encoding.UTF8);
+
+        var exePath = Process.GetCurrentProcess().MainModule?.FileName
+            ?? Path.Combine(baseDir, "bin", "CloudApp", "RBDE.CloudApp.exe");
+
+        var taskName = "MMK_BIM_Weekly_Cloud_Extract";
+        var trArg = $"\\\"{exePath}\\\" --headless-batch \\\"{profilePath}\\\"";
+
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = "schtasks.exe",
+                Arguments = $"/Create /TN \"{taskName}\" /TR \"{trArg}\" /SC WEEKLY /D MON /ST 07:00 /F",
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            };
+            using var proc = Process.Start(psi)!;
+            proc.WaitForExit(8000);
+
+            if (proc.ExitCode == 0)
+            {
+                Log($"[SCHEDULED] Registered Windows Scheduled Task '{taskName}' (Every Monday at 07:00 AM) for '{proj.Name} / {folder.Name}'.");
+                MessageBox.Show(this,
+                    $"Scheduled Task '{taskName}' registered successfully!\n\n" +
+                    $"• Target: {proj.Name} ({folder.Name})\n" +
+                    $"• Schedule: Every Monday at 07:00 AM\n" +
+                    $"• Profile: {profilePath}\n\n" +
+                    "You can also run extractions manually at any time from this app or the Revit ribbon button.",
+                    "Scheduled Extraction Active", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+            else
+            {
+                var err = proc.StandardError.ReadToEnd();
+                Log($"[WARN] Could not register Windows Task Scheduler entry automatically: {err}. Saved profile to {profilePath}.");
+                MessageBox.Show(this, $"Saved batch profile to:\n{profilePath}\n\nTask Scheduler note: {err}", "Profile Saved", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, $"Saved profile to {profilePath}.\nCould not invoke schtasks: {ex.Message}", "Notice", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
     private async void BtnStartExtract_Click(object sender, RoutedEventArgs e)
     {
         if (CmbProjects.SelectedItem is not ProjectItem proj)
@@ -602,14 +717,40 @@ public partial class MainWindow : Window
         var extractAllParams = ChkExtractAllParams.IsChecked == true;
         var targetParams = BuildTargetParameterSet(priorityColumns);
 
-        BtnStartExtract.IsEnabled = false;
-        BtnDashboard.IsEnabled = false;
-        ProgBatch.Maximum = selectedModels.Count;
-        ProgBatch.Value = 0;
+        await ExecuteBatchExtractionAsync(
+            proj.Id,
+            proj.Name,
+            selectedModels,
+            extractAllCategories,
+            categories,
+            extractAllParams,
+            targetParams,
+            priorityColumns,
+            isHeadless: false);
+    }
+
+    private async Task ExecuteBatchExtractionAsync(
+        string projectId,
+        string projectName,
+        List<ModelFileItem> selectedModels,
+        bool extractAllCategories,
+        HashSet<string> categories,
+        bool extractAllParams,
+        HashSet<string> targetParams,
+        List<string> priorityColumns,
+        bool isHeadless)
+    {
+        if (!isHeadless)
+        {
+            BtnStartExtract.IsEnabled = false;
+            BtnDashboard.IsEnabled = false;
+            ProgBatch.Maximum = selectedModels.Count;
+            ProgBatch.Value = 0;
+        }
 
         Log("\n============================================================");
         Log($"[{DateTime.Now:HH:mm:ss}] Initiating Batch Extraction ({selectedModels.Count} model(s))...");
-        Log($"Project           : {proj.Name}");
+        Log($"Project           : {projectName}");
         Log($"Category Scope    : {(extractAllCategories ? "ALL Model Categories" : $"{categories.Count} Selected Categories")}");
         Log($"Parameter Scope   : {(extractAllParams ? "ALL Model Parameters (Full Dump)" : $"{targetParams.Count} Targeted Parameters")}");
         Log($"Priority Columns  : {string.Join(", ", priorityColumns)}");
@@ -622,7 +763,8 @@ public partial class MainWindow : Window
         var sw = Stopwatch.StartNew();
         var allElements = new List<(int modelId, ExtractedElement elem)>();
         var allParameters = new List<(int modelId, ExtractedParam param)>();
-        var modelRows = new List<(int modelId, string name, string status, int count)>();
+        var modelRows = new List<(int modelId, ModelFileItem item, string status, int count)>();
+        var allIssues = new List<IdsIssueRecord>();
 
         await Task.Run(async () =>
         {
@@ -630,19 +772,22 @@ public partial class MainWindow : Window
             {
                 var model = selectedModels[i];
                 var modelId = i + 1;
-                Dispatcher.Invoke(() =>
+                if (!isHeadless)
                 {
-                    ProgBatch.Value = i;
-                    TxtProgressStatus.Text = $"[{modelId}/{selectedModels.Count}] Processing: {model.Name}...";
-                    model.Status = "Extracting...";
-                    LstModels.Items.Refresh();
-                });
+                    Dispatcher.Invoke(() =>
+                    {
+                        ProgBatch.Value = i;
+                        TxtProgressStatus.Text = $"[{modelId}/{selectedModels.Count}] Processing: {model.Name}...";
+                        model.Status = "Extracting...";
+                        LstModels.Items.Refresh();
+                    });
+                }
 
                 Log($"\n>>> [{modelId}/{selectedModels.Count}] {model.Name}");
                 try
                 {
                     var (elements, paramValues) = await aps.ExtractModelAsync(
-                        proj.Id,
+                        projectId,
                         model,
                         extractAllCategories,
                         categories,
@@ -653,58 +798,72 @@ public partial class MainWindow : Window
                     foreach (var el in elements) allElements.Add((modelId, el));
                     foreach (var pr in paramValues) allParameters.Add((modelId, pr));
 
-                    modelRows.Add((modelId, model.Name, "succeeded", elements.Count));
-                    Dispatcher.Invoke(() =>
+                    modelRows.Add((modelId, model, "succeeded", elements.Count));
+                    if (!isHeadless)
                     {
-                        model.Status = $"Done ({elements.Count:N0} el / {paramValues.Count:N0} pr)";
-                        LstModels.Items.Refresh();
-                    });
+                        Dispatcher.Invoke(() =>
+                        {
+                            model.Status = $"Done ({elements.Count:N0} el / {paramValues.Count:N0} pr)";
+                            LstModels.Items.Refresh();
+                        });
+                    }
                 }
                 catch (Exception ex)
                 {
                     Log($"[ERROR] {model.Name} failed: {ex.Message}");
-                    modelRows.Add((modelId, model.Name, "failed", 0));
-                    Dispatcher.Invoke(() =>
+                    modelRows.Add((modelId, model, "failed", 0));
+                    if (!isHeadless)
                     {
-                        model.Status = "Failed";
-                        LstModels.Items.Refresh();
-                    });
+                        Dispatcher.Invoke(() =>
+                        {
+                            model.Status = "Failed";
+                            LstModels.Items.Refresh();
+                        });
+                    }
                 }
             }
 
-            Log("\nPersisting SQLite database, relational CSVs, and Wide pivoted BI table (elements_wide.csv)...");
-            SaveToDatabaseAndCsv(runDir, modelRows, allElements, allParameters, priorityColumns);
+            // Evaluate buildingSMART IDS Rules
+            var specs = AecRuleEngine.LoadSpecifications(rulesPath);
+            allIssues = AecRuleEngine.Evaluate(specs, allElements, allParameters);
+            Log($"\n[IDS QA/QC] Evaluated {specs.Count} buildingSMART IDS specifications -> {allIssues.Count:N0} issue(s) flagged across AR/ID/MEP/STR.");
+
+            Log("Persisting run database (extract.sqlite), SQLite History Warehouse (warehouse.sqlite), and CSV exports...");
+            SaveToDatabaseAndCsv(runDir, outputRoot, timestamp, projectName, modelRows, allElements, allParameters, allIssues, priorityColumns);
         });
 
         sw.Stop();
-        ProgBatch.Value = selectedModels.Count;
-        TxtProgressStatus.Text = $"Extraction completed for {selectedModels.Count} model(s) in {sw.Elapsed.TotalSeconds:F1}s!";
+        if (!isHeadless)
+        {
+            ProgBatch.Value = selectedModels.Count;
+            TxtProgressStatus.Text = $"Extraction & IDS QA completed for {selectedModels.Count} model(s) in {sw.Elapsed.TotalSeconds:F1}s!";
+            BtnStartExtract.IsEnabled = true;
+            BtnDashboard.IsEnabled = true;
+        }
 
         Log("\n============================================================");
-        Log($"[SUCCESS] Extraction completed for {selectedModels.Count} model(s)!");
+        Log($"[SUCCESS] Extraction & IDS QA completed for {selectedModels.Count} model(s)!");
         Log($"Total Elements   : {allElements.Count:N0}");
         Log($"Total Parameters : {allParameters.Count:N0}");
+        Log($"IDS QA Issues    : {allIssues.Count:N0}");
         Log($"Elapsed Time     : {sw.Elapsed.TotalSeconds:F1} seconds");
         Log($"Output Directory : {runDir}");
-        Log($"Exported Files   : extract.sqlite, elements_wide.csv, elements.csv, parameters.csv, models.csv");
         Log("============================================================");
 
-        BtnStartExtract.IsEnabled = true;
-        BtnDashboard.IsEnabled = true;
-
-        var res = MessageBox.Show(this,
-            $"Batch extraction completed for {selectedModels.Count} model(s)!\n" +
-            $"Total: {allElements.Count:N0} elements | {allParameters.Count:N0} parameters in {sw.Elapsed.TotalSeconds:F1}s\n\n" +
-            "Generated:\n" +
-            " • extract.sqlite (Interactive Dashboard DB)\n" +
-            " • elements_wide.csv (Pivoted flat table for Power BI / Excel)\n" +
-            " • elements.csv & parameters.csv (Normalized tables)\n\n" +
-            "Would you like to open the Interactive Review Dashboard now?",
-            "Extraction Complete", MessageBoxButton.YesNo, MessageBoxImage.Information);
-
-        if (res == MessageBoxResult.Yes)
+        if (!isHeadless)
         {
-            OpenDashboard(runDir);
+            var res = MessageBox.Show(this,
+                $"Batch extraction & IDS QA completed for {selectedModels.Count} model(s)!\n" +
+                $"• Elements: {allElements.Count:N0} | Parameters: {allParameters.Count:N0}\n" +
+                $"• IDS QA Issues Flagged: {allIssues.Count:N0} (by Team AR / ID / MEP / STR)\n" +
+                $"• History Warehouse Updated: output\\warehouse.sqlite\n\n" +
+                "Would you like to open the Interactive Review Dashboard now?",
+                "Extraction Complete", MessageBoxButton.YesNo, MessageBoxImage.Information);
+
+            if (res == MessageBoxResult.Yes)
+            {
+                OpenDashboard(runDir);
+            }
         }
     }
 
@@ -719,11 +878,108 @@ public partial class MainWindow : Window
 
     private static void SaveToDatabaseAndCsv(
         string runDir,
-        List<(int modelId, string name, string status, int count)> models,
+        string outputRoot,
+        string runId,
+        string projectName,
+        List<(int modelId, ModelFileItem item, string status, int count)> models,
         List<(int modelId, ExtractedElement elem)> elements,
         List<(int modelId, ExtractedParam param)> parameters,
+        List<IdsIssueRecord> issues,
         List<string> priorityColumns)
     {
+        // 1. Update Persistent SQLite History Warehouse (output/warehouse.sqlite) and compute version deltas
+        Directory.CreateDirectory(outputRoot);
+        var warehousePath = Path.Combine(outputRoot, "warehouse.sqlite");
+        var modelDeltas = new Dictionary<int, (int prevVersion, int prevElements, int deltaElements, int prevIssues)>();
+
+        using (var wConn = new SqliteConnection("Data Source=" + warehousePath))
+        {
+            wConn.Open();
+            using (var wInit = wConn.CreateCommand())
+            {
+                wInit.CommandText = @"
+                    PRAGMA journal_mode=WAL;
+                    CREATE TABLE IF NOT EXISTS runs (
+                        run_id TEXT PRIMARY KEY,
+                        project_name TEXT,
+                        started_utc TEXT,
+                        model_count INTEGER,
+                        element_count INTEGER,
+                        parameter_count INTEGER,
+                        issue_count INTEGER
+                    );
+                    CREATE TABLE IF NOT EXISTS model_versions (
+                        run_id TEXT,
+                        lineage_id TEXT,
+                        model_name TEXT,
+                        version_number INTEGER,
+                        version_id TEXT,
+                        view_name TEXT,
+                        element_count INTEGER,
+                        issue_count INTEGER,
+                        recorded_utc TEXT,
+                        PRIMARY KEY (run_id, lineage_id)
+                    );
+                ";
+                wInit.ExecuteNonQuery();
+            }
+
+            foreach (var m in models)
+            {
+                using var qPrev = wConn.CreateCommand();
+                qPrev.CommandText = @"
+                    SELECT version_number, element_count, issue_count
+                    FROM model_versions
+                    WHERE lineage_id = $lid OR model_name = $mname
+                    ORDER BY recorded_utc DESC LIMIT 1";
+                qPrev.Parameters.AddWithValue("$lid", m.item.Id);
+                qPrev.Parameters.AddWithValue("$mname", m.item.Name);
+                using var r = qPrev.ExecuteReader();
+                if (r.Read())
+                {
+                    int pv = r.GetInt32(0);
+                    int pe = r.GetInt32(1);
+                    int pi = r.GetInt32(2);
+                    modelDeltas[m.modelId] = (pv, pe, m.count - pe, pi);
+                }
+                else
+                {
+                    modelDeltas[m.modelId] = (m.item.VersionNumber, m.count, 0, 0);
+                }
+            }
+
+            using var wTrans = wConn.BeginTransaction();
+            using (var rCmd = wConn.CreateCommand())
+            {
+                rCmd.CommandText = "INSERT OR REPLACE INTO runs VALUES ($rid, $proj, datetime('now'), $mc, $ec, $pc, $ic)";
+                rCmd.Parameters.AddWithValue("$rid", runId);
+                rCmd.Parameters.AddWithValue("$proj", projectName);
+                rCmd.Parameters.AddWithValue("$mc", models.Count);
+                rCmd.Parameters.AddWithValue("$ec", elements.Count);
+                rCmd.Parameters.AddWithValue("$pc", parameters.Count);
+                rCmd.Parameters.AddWithValue("$ic", issues.Count);
+                rCmd.ExecuteNonQuery();
+            }
+
+            foreach (var m in models)
+            {
+                var mIssues = issues.Count(x => x.ModelId == m.modelId);
+                using var mvCmd = wConn.CreateCommand();
+                mvCmd.CommandText = "INSERT OR REPLACE INTO model_versions VALUES ($rid, $lid, $name, $vnum, $vid, $vname, $ec, $ic, datetime('now'))";
+                mvCmd.Parameters.AddWithValue("$rid", runId);
+                mvCmd.Parameters.AddWithValue("$lid", m.item.Id);
+                mvCmd.Parameters.AddWithValue("$name", m.item.Name);
+                mvCmd.Parameters.AddWithValue("$vnum", m.item.VersionNumber);
+                mvCmd.Parameters.AddWithValue("$vid", m.item.VersionId);
+                mvCmd.Parameters.AddWithValue("$vname", m.item.ViewName);
+                mvCmd.Parameters.AddWithValue("$ec", m.count);
+                mvCmd.Parameters.AddWithValue("$ic", mIssues);
+                mvCmd.ExecuteNonQuery();
+            }
+            wTrans.Commit();
+        }
+
+        // 2. Write Run-Specific SQLite Database (extract.sqlite) with full schema + IDS Issues + History snapshot
         var dbPath = Path.Combine(runDir, "extract.sqlite");
         using var conn = new SqliteConnection("Data Source=" + dbPath);
         conn.Open();
@@ -734,14 +990,60 @@ public partial class MainWindow : Window
                 PRAGMA foreign_keys=OFF;
                 PRAGMA journal_mode=WAL;
                 PRAGMA synchronous=NORMAL;
-                CREATE TABLE models (model_id INTEGER PRIMARY KEY, path TEXT NOT NULL, status TEXT NOT NULL,
-                    started_utc TEXT NOT NULL, finished_utc TEXT, element_count INTEGER DEFAULT 0);
-                CREATE TABLE elements (model_id INTEGER NOT NULL, element_id INTEGER NOT NULL,
-                    unique_id TEXT, kind TEXT, category_id TEXT, category TEXT, family TEXT, type_name TEXT,
-                    type_id INTEGER, name TEXT, PRIMARY KEY(model_id, element_id));
-                CREATE TABLE parameters (model_id INTEGER NOT NULL, element_id INTEGER NOT NULL, scope TEXT,
-                    parameter_key TEXT, name TEXT, storage_type TEXT, has_value INTEGER, raw_value TEXT,
-                    display_value TEXT, unit_type_id TEXT);
+                CREATE TABLE models (
+                    model_id INTEGER PRIMARY KEY,
+                    path TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    started_utc TEXT NOT NULL,
+                    finished_utc TEXT,
+                    element_count INTEGER DEFAULT 0,
+                    version_number INTEGER DEFAULT 1,
+                    view_name TEXT DEFAULT '{3D}',
+                    delta_elements INTEGER DEFAULT 0,
+                    derivative_urn TEXT DEFAULT ''
+                );
+                CREATE TABLE elements (
+                    model_id INTEGER NOT NULL,
+                    element_id INTEGER NOT NULL,
+                    unique_id TEXT,
+                    kind TEXT,
+                    category_id TEXT,
+                    category TEXT,
+                    family TEXT,
+                    type_name TEXT,
+                    type_id INTEGER,
+                    name TEXT,
+                    object_id INTEGER DEFAULT 0,
+                    PRIMARY KEY(model_id, element_id)
+                );
+                CREATE TABLE parameters (
+                    model_id INTEGER NOT NULL,
+                    element_id INTEGER NOT NULL,
+                    scope TEXT,
+                    parameter_key TEXT,
+                    name TEXT,
+                    storage_type TEXT,
+                    has_value INTEGER,
+                    raw_value TEXT,
+                    display_value TEXT,
+                    unit_type_id TEXT
+                );
+                CREATE TABLE issues (
+                    issue_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    model_id INTEGER NOT NULL,
+                    element_id INTEGER NOT NULL,
+                    unique_id TEXT,
+                    category TEXT,
+                    family TEXT,
+                    type_name TEXT,
+                    rule_id TEXT,
+                    requirement_id TEXT,
+                    discipline TEXT,
+                    severity TEXT,
+                    parameter_name TEXT,
+                    actual_value TEXT,
+                    message TEXT
+                );
                 CREATE TABLE priority_columns (col_order INTEGER PRIMARY KEY, name TEXT NOT NULL);
                 CREATE TABLE errors (utc TEXT, model_id INTEGER, element_id INTEGER, stage TEXT, exception_type TEXT, message TEXT);
             ";
@@ -750,7 +1052,6 @@ public partial class MainWindow : Window
 
         using (var trans = conn.BeginTransaction())
         {
-            // 0. Priority Columns Metadata
             using (var colCmd = conn.CreateCommand())
             {
                 colCmd.CommandText = "INSERT INTO priority_columns VALUES (@ord, @name)";
@@ -764,29 +1065,36 @@ public partial class MainWindow : Window
                 }
             }
 
-            // 1. Models
             using (var mCmd = conn.CreateCommand())
             {
-                mCmd.CommandText = "INSERT INTO models VALUES (@id, @path, @status, DateTime('now'), DateTime('now'), @count)";
+                mCmd.CommandText = "INSERT INTO models VALUES (@id, @path, @status, DateTime('now'), DateTime('now'), @count, @vnum, @vname, @delta, @urn)";
                 var pId = mCmd.Parameters.Add("@id", SqliteType.Integer);
                 var pPath = mCmd.Parameters.Add("@path", SqliteType.Text);
                 var pStatus = mCmd.Parameters.Add("@status", SqliteType.Text);
                 var pCount = mCmd.Parameters.Add("@count", SqliteType.Integer);
+                var pVnum = mCmd.Parameters.Add("@vnum", SqliteType.Integer);
+                var pVname = mCmd.Parameters.Add("@vname", SqliteType.Text);
+                var pDelta = mCmd.Parameters.Add("@delta", SqliteType.Integer);
+                var pUrn = mCmd.Parameters.Add("@urn", SqliteType.Text);
 
                 foreach (var m in models)
                 {
+                    var deltaInfo = modelDeltas.GetValueOrDefault(m.modelId, (1, m.count, 0, 0));
                     pId.Value = m.modelId;
-                    pPath.Value = m.name;
+                    pPath.Value = m.item.Name;
                     pStatus.Value = m.status;
                     pCount.Value = m.count;
+                    pVnum.Value = m.item.VersionNumber;
+                    pVname.Value = string.IsNullOrEmpty(m.item.ViewName) ? "{3D}" : m.item.ViewName;
+                    pDelta.Value = deltaInfo.Item3;
+                    pUrn.Value = m.item.DerivativeUrn ?? "";
                     mCmd.ExecuteNonQuery();
                 }
             }
 
-            // 2. Elements
             using (var eCmd = conn.CreateCommand())
             {
-                eCmd.CommandText = "INSERT OR IGNORE INTO elements VALUES (@m, @id, @uid, @kind, @catId, @cat, @fam, @type, @tid, @name)";
+                eCmd.CommandText = "INSERT OR IGNORE INTO elements VALUES (@m, @id, @uid, @kind, @catId, @cat, @fam, @type, @tid, @name, @objId)";
                 var pM = eCmd.Parameters.Add("@m", SqliteType.Integer);
                 var pId = eCmd.Parameters.Add("@id", SqliteType.Integer);
                 var pUid = eCmd.Parameters.Add("@uid", SqliteType.Text);
@@ -797,6 +1105,7 @@ public partial class MainWindow : Window
                 var pType = eCmd.Parameters.Add("@type", SqliteType.Text);
                 var pTid = eCmd.Parameters.Add("@tid", SqliteType.Integer);
                 var pName = eCmd.Parameters.Add("@name", SqliteType.Text);
+                var pObjId = eCmd.Parameters.Add("@objId", SqliteType.Integer);
 
                 foreach (var (mId, el) in elements)
                 {
@@ -810,11 +1119,11 @@ public partial class MainWindow : Window
                     pType.Value = el.TypeName;
                     pTid.Value = el.TypeId;
                     pName.Value = el.Name;
+                    pObjId.Value = el.ObjectId;
                     eCmd.ExecuteNonQuery();
                 }
             }
 
-            // 3. Parameters
             using (var pCmd = conn.CreateCommand())
             {
                 pCmd.CommandText = "INSERT INTO parameters VALUES (@m, @id, @scope, @key, @name, @stype, 1, @raw, @disp, @unit)";
@@ -843,42 +1152,84 @@ public partial class MainWindow : Window
                 }
             }
 
+            using (var iCmd = conn.CreateCommand())
+            {
+                iCmd.CommandText = @"
+                    INSERT INTO issues (model_id, element_id, unique_id, category, family, type_name, rule_id, requirement_id, discipline, severity, parameter_name, actual_value, message)
+                    VALUES (@m, @id, @uid, @cat, @fam, @typ, @rid, @req, @disc, @sev, @pname, @aval, @msg)";
+                var piM = iCmd.Parameters.Add("@m", SqliteType.Integer);
+                var piId = iCmd.Parameters.Add("@id", SqliteType.Integer);
+                var piUid = iCmd.Parameters.Add("@uid", SqliteType.Text);
+                var piCat = iCmd.Parameters.Add("@cat", SqliteType.Text);
+                var piFam = iCmd.Parameters.Add("@fam", SqliteType.Text);
+                var piTyp = iCmd.Parameters.Add("@typ", SqliteType.Text);
+                var piRid = iCmd.Parameters.Add("@rid", SqliteType.Text);
+                var piReq = iCmd.Parameters.Add("@req", SqliteType.Text);
+                var piDisc = iCmd.Parameters.Add("@disc", SqliteType.Text);
+                var piSev = iCmd.Parameters.Add("@sev", SqliteType.Text);
+                var piPname = iCmd.Parameters.Add("@pname", SqliteType.Text);
+                var piAval = iCmd.Parameters.Add("@aval", SqliteType.Text);
+                var piMsg = iCmd.Parameters.Add("@msg", SqliteType.Text);
+
+                foreach (var iss in issues)
+                {
+                    piM.Value = iss.ModelId;
+                    piId.Value = iss.ElementId;
+                    piUid.Value = iss.UniqueId;
+                    piCat.Value = iss.Category;
+                    piFam.Value = iss.Family;
+                    piTyp.Value = iss.TypeName;
+                    piRid.Value = iss.RuleId;
+                    piReq.Value = iss.RequirementId;
+                    piDisc.Value = iss.Discipline;
+                    piSev.Value = iss.Severity;
+                    piPname.Value = iss.ParameterName;
+                    piAval.Value = iss.ActualValue;
+                    piMsg.Value = iss.Message;
+                    iCmd.ExecuteNonQuery();
+                }
+            }
+
             trans.Commit();
         }
 
-        // Create indexes after bulk insert for speed
         using (var idxCmd = conn.CreateCommand())
         {
             idxCmd.CommandText = @"
                 CREATE INDEX ix_parameter_name ON parameters(name);
                 CREATE INDEX ix_parameter_element ON parameters(model_id, element_id);
                 CREATE INDEX ix_element_cat ON elements(category);
+                CREATE INDEX ix_issues_disc ON issues(discipline, severity);
+                CREATE INDEX ix_issues_rule ON issues(rule_id);
             ";
             idxCmd.ExecuteNonQuery();
         }
 
-        // Write CSVs
+        // Write CSVs & Fix Assistant JSON
         var utf8Bom = new UTF8Encoding(encoderShouldEmitUTF8Identifier: true);
-        var modelNameMap = models.ToDictionary(m => m.modelId, m => m.name);
+        var modelNameMap = models.ToDictionary(m => m.modelId, m => m.item.Name);
 
         // 1. models.csv
         var modelsCsv = Path.Combine(runDir, "models.csv");
         using (var swM = new StreamWriter(modelsCsv, false, utf8Bom))
         {
-            swM.WriteLine("model_id,path,status,element_count");
+            swM.WriteLine("model_id,path,version_number,view_name,status,element_count,delta_elements");
             foreach (var m in models)
-                swM.WriteLine($"{m.modelId},{EscapeCsv(m.name)},{m.status},{m.count}");
+            {
+                var d = modelDeltas.GetValueOrDefault(m.modelId, (1, m.count, 0, 0));
+                swM.WriteLine($"{m.modelId},{EscapeCsv(m.item.Name)},{m.item.VersionNumber},{EscapeCsv(m.item.ViewName)},{m.status},{m.count},{d.Item3}");
+            }
         }
 
         // 2. elements.csv
         var elementsCsv = Path.Combine(runDir, "elements.csv");
         using (var swE = new StreamWriter(elementsCsv, false, utf8Bom))
         {
-            swE.WriteLine("model_id,model_name,element_id,unique_id,kind,category,family,type_name,type_id,name");
+            swE.WriteLine("model_id,model_name,element_id,object_id,unique_id,kind,category,family,type_name,type_id,name");
             foreach (var (mId, el) in elements)
             {
                 var mName = modelNameMap.GetValueOrDefault(mId, "");
-                swE.WriteLine($"{mId},{EscapeCsv(mName)},{el.ElementId},{EscapeCsv(el.UniqueId)},{el.Kind},{EscapeCsv(el.Category)},{EscapeCsv(el.Family)},{EscapeCsv(el.TypeName)},{el.TypeId},{EscapeCsv(el.Name)}");
+                swE.WriteLine($"{mId},{EscapeCsv(mName)},{el.ElementId},{el.ObjectId},{EscapeCsv(el.UniqueId)},{el.Kind},{EscapeCsv(el.Category)},{EscapeCsv(el.Family)},{EscapeCsv(el.TypeName)},{el.TypeId},{EscapeCsv(el.Name)}");
             }
         }
 
@@ -893,7 +1244,30 @@ public partial class MainWindow : Window
             }
         }
 
-        // 4. elements_wide.csv (Pivoted flat table for Power BI / Excel / Tableau)
+        // 4. issues.csv & fix_candidates.json (for Revit Fix Assistant by Team AR/ID/MEP/STR)
+        var issuesCsv = Path.Combine(runDir, "issues.csv");
+        using (var swI = new StreamWriter(issuesCsv, false, utf8Bom))
+        {
+            swI.WriteLine("model_id,model_name,element_id,unique_id,discipline,severity,rule_id,requirement_id,category,family,type_name,parameter_name,actual_value,message");
+            foreach (var iss in issues)
+            {
+                var mName = modelNameMap.GetValueOrDefault(iss.ModelId, "");
+                swI.WriteLine($"{iss.ModelId},{EscapeCsv(mName)},{iss.ElementId},{EscapeCsv(iss.UniqueId)},{EscapeCsv(iss.Discipline)},{EscapeCsv(iss.Severity)},{EscapeCsv(iss.RuleId)},{EscapeCsv(iss.RequirementId)},{EscapeCsv(iss.Category)},{EscapeCsv(iss.Family)},{EscapeCsv(iss.TypeName)},{EscapeCsv(iss.ParameterName)},{EscapeCsv(iss.ActualValue)},{EscapeCsv(iss.Message)}");
+            }
+        }
+
+        var fixJsonPath = Path.Combine(runDir, "fix_candidates.json");
+        var fixPayload = JsonSerializer.Serialize(new
+        {
+            runId,
+            projectName,
+            generatedUtc = DateTime.UtcNow.ToString("O"),
+            totalIssues = issues.Count,
+            issues = issues.Take(2000)
+        }, new JsonSerializerOptions { WriteIndented = true });
+        File.WriteAllText(fixJsonPath, fixPayload, Encoding.UTF8);
+
+        // 5. elements_wide.csv
         var elemParamMap = new Dictionary<(int mId, long elId), Dictionary<string, string>>();
         var paramFrequency = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
 
@@ -912,7 +1286,6 @@ public partial class MainWindow : Window
             }
         }
 
-        // Build final Wide CSV columns: Priority columns first, then top populated parameters up to 60 total dynamic columns
         var wideColumns = new List<string>();
         var wideSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var col in priorityColumns)
@@ -928,7 +1301,7 @@ public partial class MainWindow : Window
         var wideCsv = Path.Combine(runDir, "elements_wide.csv");
         using (var swW = new StreamWriter(wideCsv, false, utf8Bom))
         {
-            var coreHeaders = new[] { "ModelId", "ModelName", "ElementId", "UniqueId", "Kind", "Category", "Family", "TypeName", "Name" };
+            var coreHeaders = new[] { "ModelId", "ModelName", "ElementId", "ObjectId", "UniqueId", "Kind", "Category", "Family", "TypeName", "Name" };
             var allHeaders = coreHeaders.Concat(wideColumns).Select(EscapeCsv);
             swW.WriteLine(string.Join(",", allHeaders));
 
@@ -940,6 +1313,7 @@ public partial class MainWindow : Window
                 rowSb.Append(mId).Append(',')
                      .Append(EscapeCsv(mName)).Append(',')
                      .Append(el.ElementId).Append(',')
+                     .Append(el.ObjectId).Append(',')
                      .Append(EscapeCsv(el.UniqueId)).Append(',')
                      .Append(EscapeCsv(el.Kind)).Append(',')
                      .Append(EscapeCsv(el.Category)).Append(',')
