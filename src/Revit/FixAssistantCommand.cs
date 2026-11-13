@@ -94,7 +94,20 @@ public sealed class FixAssistantCommand : IExternalCommand
     {
         try
         {
-            var uiDoc = commandData.Application.ActiveUIDocument;
+            return Launch(commandData.Application);
+        }
+        catch (Exception ex)
+        {
+            message = ex.Message;
+            return Result.Failed;
+        }
+    }
+
+    public static Result Launch(UIApplication uiApp)
+    {
+        try
+        {
+            var uiDoc = uiApp.ActiveUIDocument;
             if (uiDoc?.Document == null)
             {
                 Autodesk.Revit.UI.TaskDialog.Show("BIM Fix Assistant", "Please open a Revit model before running the Fix Assistant.");
@@ -138,7 +151,7 @@ public sealed class FixAssistantCommand : IExternalCommand
             var handler = new FixExternalEventHandler();
             var extEvent = ExternalEvent.Create(handler);
 
-            activeWindow = new FixAssistantWindow(commandData.Application, issues, jsonPath, handler, extEvent);
+            activeWindow = new FixAssistantWindow(uiApp, issues, jsonPath, handler, extEvent);
             handler.WindowInstance = activeWindow;
             activeWindow.Closed += (_, _) => activeWindow = null;
 
@@ -148,7 +161,7 @@ public sealed class FixAssistantCommand : IExternalCommand
         }
         catch (Exception ex)
         {
-            message = ex.Message;
+            Autodesk.Revit.UI.TaskDialog.Show("BIM Fix Assistant Error", ex.Message);
             return Result.Failed;
         }
     }
