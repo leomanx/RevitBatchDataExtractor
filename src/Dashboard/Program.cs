@@ -253,6 +253,9 @@ while (listener.IsListening)
                 "api/diffs" => BuildDiffsResponse(),
                 "api/viewer-theming" => BuildViewerThemingResponse(),
                 "api/lookup-by-dbid" => BuildLookupByDbIdResponse(),
+                "api/level-dbids" => Query(
+                    "SELECT DISTINCT e.object_id, e.element_id FROM elements e JOIN parameters p ON p.model_id=e.model_id AND p.element_id=e.element_id WHERE e.model_id=$model AND p.name IN ('Level','Base Constraint','Reference Level','Schedule Level') AND p.display_value=$level AND e.object_id>0",
+                    new() { ["$model"] = q["model"] ?? "1", ["$level"] = q["level"] ?? "" }),
                 "api/detail" => Query(
                     "SELECT scope,parameter_key,name,storage_type,has_value,raw_value,display_value,unit_type_id FROM parameters WHERE model_id=$model AND element_id=$element ORDER BY scope,name",
                     new() { ["$model"] = q["model"] ?? "", ["$element"] = q["element"] ?? "" }),
