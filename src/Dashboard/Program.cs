@@ -155,6 +155,33 @@ while (listener.IsListening)
         {
             await Send(html, "text/html; charset=utf-8");
         }
+        else if (route == "api/download-pdf")
+        {
+            var qPdf = context.Request.QueryString;
+            var urn = (qPdf["urn"] ?? "").Trim();
+            var derivUrn = (qPdf["derivativeUrn"] ?? "").Trim();
+            var fileName = Path.GetFileName(qPdf["name"] ?? "Sheet.pdf");
+            if (!fileName.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase)) fileName += ".pdf";
+
+            dynamic tokObj = await GetViewerTokenAsync();
+            string accessTok = tokObj.GetType().GetProperty("access_token")!.GetValue(tokObj)!.ToString()!;
+
+            var dlUrl = $"https://developer.api.autodesk.com/modelderivative/v2/designdata/{Uri.EscapeDataString(urn)}/manifest/{Uri.EscapeDataString(derivUrn)}";
+            using var dlReq = new HttpRequestMessage(HttpMethod.Get, dlUrl);
+            dlReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessTok);
+            using var dlResp = await viewerHttp.SendAsync(dlReq);
+            if (!dlResp.IsSuccessStatusCode)
+            {
+                var errTxt = await dlResp.Content.ReadAsStringAsync();
+                throw new InvalidOperationException($"Failed to download cloud PDF derivative ({(int)dlResp.StatusCode}): {errTxt}");
+            }
+
+            var pdfBytes = await dlResp.Content.ReadAsByteArrayAsync();
+            context.Response.ContentType = "application/pdf";
+            context.Response.Headers["Content-Disposition"] = $"attachment; filename=\"{fileName.Replace("\"", "")}\"";
+            context.Response.ContentLength64 = pdfBytes.Length;
+            await context.Response.OutputStream.WriteAsync(pdfBytes);
+        }
         else
         {
             using var db = new SqliteConnection(new SqliteConnectionStringBuilder
@@ -245,6 +272,7 @@ while (listener.IsListening)
             object result = route switch
             {
                 "api/viewer-token" => await GetViewerTokenAsync(),
+                "api/model-sheets" => await BuildModelSheetsManifestAsync(q["urn"] ?? ""),
                 "api/overview" => BuildOverview(),
                 "api/elements" => BuildElementsResponse(),
                 "api/heatmap" => BuildHeatmapResponse(),
@@ -500,6 +528,72 @@ while (listener.IsListening)
                     "SELECT e.*, m.path FROM elements e JOIN models m USING(model_id) WHERE e.model_id=$model AND (e.object_id=$dbid OR e.element_id=$elid) LIMIT 1",
                     new() { ["$model"] = targetModel, ["$dbid"] = dbId, ["$elid"] = revitId });
                 return rows.FirstOrDefault() ?? new Dictionary<string, object?>();
+            }
+
+            async Task<object> BuildModelSheetsManifestAsync(string rawUrn)
+            {
+                var cleanUrn = rawUrn.Trim();
+                if (cleanUrn.StartsWith("urn:", StringComparison.OrdinalIgnoreCase))
+                    cleanUrn = cleanUrn[4..];
+                if (string.IsNullOrWhiteSpace(cleanUrn))
+                    return new { sheets2d = Array.Empty<object>(), views3d = Array.Empty<object>() };
+
+                dynamic tokObj = await GetViewerTokenAsync();
+                string accessTok = tokObj.GetType().GetProperty("access_token")!.GetValue(tokObj)!.ToString()!;
+
+                var mUrl = $"https://developer.api.autodesk.com/modelderivative/v2/designdata/{Uri.EscapeDataString(cleanUrn)}/manifest";
+                using var mReq = new HttpRequestMessage(HttpMethod.Get, mUrl);
+                mReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessTok);
+                using var mResp = await viewerHttp.SendAsync(mReq);
+                if (!mResp.IsSuccessStatusCode)
+                    return new { sheets2d = Array.Empty<object>(), views3d = Array.Empty<object>() };
+
+                using var mDoc = JsonDocument.Parse(await mResp.Content.ReadAsStringAsync());
+                var sheets2d = new List<object>();
+                var views3d = new List<object>();
+
+                void WalkNode(JsonElement node)
+                {
+                    var type = node.TryGetProperty("type", out var t) ? t.GetString() ?? "" : "";
+                    var role = node.TryGetProperty("role", out var r) ? r.GetString() ?? "" : "";
+                    if (type == "geometry" && (role == "2d" || role == "3d"))
+                    {
+                        var name = node.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "";
+                        var guid = node.TryGetProperty("guid", out var g) ? g.GetString() ?? "" : "";
+                        var viewId = node.TryGetProperty("viewableID", out var vid) ? vid.GetString() ?? "" : "";
+                        string? pdfDerivUrn = null;
+
+                        if (node.TryGetProperty("children", out var chArr) && chArr.ValueKind == JsonValueKind.Array)
+                        {
+                            foreach (var ch in chArr.EnumerateArray())
+                            {
+                                var chRole = ch.TryGetProperty("role", out var cr) ? cr.GetString() ?? "" : "";
+                                var chMime = ch.TryGetProperty("mime", out var cm) ? cm.GetString() ?? "" : "";
+                                if (chRole == "pdf-page" || chMime == "application/pdf")
+                                {
+                                    pdfDerivUrn = ch.TryGetProperty("urn", out var cu) ? cu.GetString() : null;
+                                    break;
+                                }
+                            }
+                        }
+
+                        var item = new { name, guid, viewableId = viewId, role, hasNativePdf = !string.IsNullOrEmpty(pdfDerivUrn), pdfUrn = pdfDerivUrn ?? "" };
+                        if (role == "2d") sheets2d.Add(item);
+                        else views3d.Add(item);
+                    }
+
+                    if (node.TryGetProperty("children", out var children) && children.ValueKind == JsonValueKind.Array)
+                    {
+                        foreach (var c in children.EnumerateArray()) WalkNode(c);
+                    }
+                    if (node.TryGetProperty("derivatives", out var derivs) && derivs.ValueKind == JsonValueKind.Array)
+                    {
+                        foreach (var d in derivs.EnumerateArray()) WalkNode(d);
+                    }
+                }
+
+                WalkNode(mDoc.RootElement);
+                return new { urn = cleanUrn, sheets2d, views3d };
             }
 
             object BuildElementsResponse()

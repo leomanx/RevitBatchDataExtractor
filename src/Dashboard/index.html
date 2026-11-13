@@ -140,6 +140,7 @@ dialog::backdrop{background:rgba(15,23,42,.55)}
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap">
       <button class="button primary" id="btnToggle3DViewer">Open 3D Cloud Viewer (SVF2)</button>
+      <button class="button" id="btnHeaderSheetSet">2D / PDF Sheet Set</button>
       <button class="button" id="btnToggleCols">Configure Table Columns</button>
       <button class="button" id="print">Print / Export PDF</button>
     </div>
@@ -181,6 +182,7 @@ dialog::backdrop{background:rgba(15,23,42,.55)}
       </div>
       <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
         <span style="font-size:11px;color:#5eead4;font-weight:600;text-transform:uppercase">Export from SVF2:</span>
+        <button type="button" class="chip-btn" id="btnOpenSheetSetModal" title="Browse 2D Drawing Sheets, download Native Vector Cloud PDFs, or compile a Multi-Page PDF Sheet Set">PDF Sheet Set</button>
         <button type="button" class="chip-btn" id="btnExportSnapshotPng" title="Export high-res 2D/3D cropped view with Architect Coordination Titleblock (.PNG)">Crop Sheet (.PNG)</button>
         <button type="button" class="chip-btn" id="btnExportMeshObj" title="Extract 3D triangulated mesh of visible/isolated elements directly from SVF2 to .OBJ (for SketchUp/Blender/Rhino/CAD)">3D Mesh (.OBJ)</button>
         <button type="button" class="chip-btn" id="btnExportRefIfc" title="Generate reference IFC4 model (.IFC) with 3D bounding solids and SQLite PropertySets (for BlenderBIM/BIMcollab/FreeCAD)">Reference (.IFC)</button>
@@ -583,6 +585,43 @@ dialog::backdrop{background:rgba(15,23,42,.55)}
     </div>
   </section>
 </main>
+
+<!-- 2D Sheet Set & Cloud PDF Export Modal -->
+<dialog id="sheetSetModal">
+  <div class="heading-row">
+    <div>
+      <h2>2D Drawing Sheet Set &amp; Cloud Vector PDF Exporter</h2>
+      <p id="sheetSetMeta" class="muted">Inspect published 2D Sheets &amp; 3D Views from ACC Model Derivative, download Native Vector Cloud PDFs, or compile a multi-page PDF Sheet Set.</p>
+    </div>
+    <button id="closeSheetSetModal" class="button">Close</button>
+  </div>
+  <div class="heading-row" style="margin-bottom:12px">
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <button type="button" class="chip-btn" id="btnSelectAllSheets">Select All 2D Sheets</button>
+      <button type="button" class="chip-btn" id="btnClearAllSheets">Clear Selection</button>
+      <span id="sheetSetStatus" class="count-label"></span>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button type="button" class="button" id="btnBatchDownloadNativePdfs">Batch Download Native Cloud PDFs</button>
+      <button type="button" class="button primary" id="btnCompileMultiPagePdf">Compile Selected to Multi-Page PDF Set (A3)</button>
+    </div>
+  </div>
+  <div class="table-wrap" style="max-height:62vh">
+    <table>
+      <thead>
+        <tr>
+          <th style="width:45px">Select</th>
+          <th>Role</th>
+          <th>Sheet / View Name</th>
+          <th>Viewable GUID</th>
+          <th>Cloud Vector PDF Status</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody id="sheetSetRows"></tbody>
+    </table>
+  </div>
+</dialog>
 
 <!-- Element Detail Modal -->
 <dialog id="detail">
@@ -1824,6 +1863,236 @@ $('btnIsolateSelected3D').onclick = async () => {
 $('btnExportSnapshotPng').onclick = exportAnnotatedSnapshotPng;
 $('btnExportMeshObj').onclick = exportVisibleMeshObj;
 $('btnExportRefIfc').onclick = exportReferenceIfc;
+
+let currentManifestData = null;
+
+async function ensureViewerReadyForModel() {
+  const dock = $('viewerDock');
+  if (dock.classList.contains('hidden')) {
+    dock.classList.remove('hidden');
+    $('btnToggle3DViewer').textContent = 'Hide 3D Cloud Viewer';
+  }
+  await load3DModelByIdOrDefault($('viewerModelSelect').value || $('model').value);
+}
+
+async function loadSheetViewableByGuid(guid, sheetName) {
+  await ensureViewerReadyForModel();
+  if (!apsViewer || !currentViewerDoc) return false;
+  let targetIdx = viewableNodesList.findIndex(n => (typeof n.guid === 'function' ? n.guid() : n.data?.guid) === guid);
+  if (targetIdx < 0) {
+    targetIdx = viewableNodesList.findIndex(n => (n.data?.name || '') === sheetName);
+  }
+  if (targetIdx >= 0) {
+    $('viewerViewableSelect').value = String(targetIdx);
+    const targetNode = viewableNodesList[targetIdx];
+    $('viewerStatusText').textContent = 'Loading 2D Sheet / View: ' + (targetNode.data?.name || sheetName) + '...';
+    await apsViewer.loadDocumentNode(currentViewerDoc, targetNode);
+    $('viewerStatusText').textContent = 'Active View/Sheet: ' + (targetNode.data?.name || sheetName);
+    return true;
+  }
+  return false;
+}
+
+async function openSheetSetModal() {
+  $('sheetSetModal').showModal();
+  await ensureViewerReadyForModel();
+  const models = overview?.models || [];
+  const mId = loadedViewerModelId || $('viewerModelSelect').value || (models[0]?.model_id);
+  const modelObj = models.find(m => String(m.model_id) === String(mId)) || models[0];
+  if (!modelObj || !modelObj.derivative_urn) {
+    $('sheetSetSummaryText').textContent = 'No Cloud Derivative URN available for this model.';
+    return;
+  }
+
+  $('sheetSetSummaryText').textContent = 'Querying Autodesk Cloud Manifest for 2D Sheets, 3D Views & Native Vector PDFs (' + modelObj.model_name + ')...';
+  $('sheetSetRows').innerHTML = '<tr><td colspan="5" class="muted">Loading manifest from Autodesk Model Derivative...</td></tr>';
+
+  try {
+    const manifest = await api('model-sheets', new URLSearchParams({ urn: modelObj.derivative_urn }));
+    currentManifestData = { ...manifest, modelName: modelObj.model_name };
+    const allItems = [...(manifest.sheets2d || []), ...(manifest.views3d || [])];
+    const nativePdfCount = allItems.filter(s => s.hasNativePdf).length;
+
+    $('sheetSetSummaryText').textContent =
+      `Model: ${modelObj.model_name} | 2D Drawing Sheets: ${(manifest.sheets2d || []).length} | 3D Views: ${(manifest.views3d || []).length} | Native Cloud Vector PDFs: ${nativePdfCount}`;
+
+    if (!allItems.length) {
+      $('sheetSetRows').innerHTML = '<tr><td colspan="5" class="muted">No 2D sheets or 3D views found in the published manifest.</td></tr>';
+      return;
+    }
+
+    $('sheetSetRows').innerHTML = allItems.map((item, idx) => {
+      const is2d = item.role === '2d';
+      const roleBadge = is2d
+        ? '<span class="badge Fix" style="background:rgba(16,185,129,.18);color:#10b981;">2D Sheet</span>'
+        : '<span class="badge Info">3D View</span>';
+      const pdfStatus = item.hasNativePdf
+        ? '<span class="badge Fix">Native Vector PDF Ready</span>'
+        : '<span class="badge Warning">SVF2 Printable Sheet</span>';
+      const safeFileName = (item.name || ('Sheet_' + (idx + 1))).replace(/[^\w\-. ]+/g, '_') + '.pdf';
+      const pdfDownloadUrl = item.hasNativePdf
+        ? `api/download-pdf?urn=${encodeURIComponent(manifest.urn)}&derivativeUrn=${encodeURIComponent(item.pdfDerivativeUrn)}&name=${encodeURIComponent(safeFileName)}`
+        : '';
+
+      return `<tr>
+        <td><input type="checkbox" class="sheet-set-cb" data-guid="${esc(item.guid)}" data-name="${esc(item.name)}" data-role="${esc(item.role)}" data-pdfurl="${esc(pdfDownloadUrl)}" ${is2d ? 'checked' : ''} /></td>
+        <td>${roleBadge}</td>
+        <td><strong>${esc(item.name)}</strong></td>
+        <td>${pdfStatus}</td>
+        <td style="display:flex;gap:6px;flex-wrap:wrap;">
+          <button type="button" class="secondary btn-open-sheet-view" data-guid="${esc(item.guid)}" data-name="${esc(item.name)}" style="padding:3px 8px;font-size:11px;">Open in 2D/3D Viewer</button>
+          ${item.hasNativePdf ? `<a href="${pdfDownloadUrl}" download="${esc(safeFileName)}" class="chip" style="text-decoration:none;border-color:rgba(16,185,129,.5);color:#10b981;">Download Vector .PDF</a>` : ''}
+        </td>
+      </tr>`;
+    }).join('');
+
+    document.querySelectorAll('.btn-open-sheet-view').forEach(btn => {
+      btn.onclick = async () => {
+        const g = btn.getAttribute('data-guid');
+        const n = btn.getAttribute('data-name');
+        $('sheetSetModal').close();
+        await loadSheetViewableByGuid(g, n);
+      };
+    });
+  } catch (e) {
+    $('sheetSetSummaryText').textContent = 'Failed to load Cloud Sheet Set: ' + e.message;
+  }
+}
+
+$('btnHeaderSheetSet').onclick = openSheetSetModal;
+$('btnOpenSheetSetModal').onclick = openSheetSetModal;
+$('closeSheetSetModal').onclick = () => $('sheetSetModal').close();
+$('btnSelectAllSheets').onclick = () => document.querySelectorAll('.sheet-set-cb').forEach(cb => cb.checked = true);
+$('btnClearAllSheets').onclick = () => document.querySelectorAll('.sheet-set-cb').forEach(cb => cb.checked = false);
+
+$('btnBatchDownloadNativePdfs').onclick = () => {
+  const checked = [...document.querySelectorAll('.sheet-set-cb:checked')];
+  const withPdf = checked.filter(cb => cb.getAttribute('data-pdfurl'));
+  if (!withPdf.length) {
+    $('sheetSetSummaryText').textContent = 'None of the selected sheets have a pre-generated Native Vector PDF derivative. Use "Compile Selected to Multi-Page PDF Set (A3)" instead!';
+    return;
+  }
+  withPdf.forEach((cb, i) => {
+    setTimeout(() => {
+      const a = document.createElement('a');
+      a.href = cb.getAttribute('data-pdfurl');
+      a.download = (cb.getAttribute('data-name') || ('Sheet_' + (i + 1))) + '.pdf';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    }, i * 450);
+  });
+  $('sheetSetSummaryText').textContent = `Triggered download of ${withPdf.length} Native Cloud Vector PDF file(s).`;
+};
+
+$('btnCompileMultiPagePdf').onclick = async () => {
+  const checked = [...document.querySelectorAll('.sheet-set-cb:checked')];
+  if (!checked.length) {
+    $('sheetSetSummaryText').textContent = 'Select at least one 2D Sheet or 3D View to compile into a PDF Sheet Set.';
+    return;
+  }
+
+  $('btnCompileMultiPagePdf').disabled = true;
+  const pages = [];
+  const modelName = currentManifestData?.modelName || 'ACC Cloud Model';
+
+  for (let i = 0; i < checked.length; i++) {
+    const cb = checked[i];
+    const guid = cb.getAttribute('data-guid');
+    const name = cb.getAttribute('data-name');
+    const role = cb.getAttribute('data-role');
+    $('sheetSetSummaryText').textContent = `Rendering Sheet ${i + 1} of ${checked.length}: ${name}...`;
+
+    const loaded = await loadSheetViewableByGuid(guid, name);
+    if (!loaded || !apsViewer) continue;
+
+    // Wait briefly for SVF2/F2D geometry tiles to settle
+    await new Promise(r => setTimeout(r, 950));
+    const blobUrl = await new Promise(resolve => {
+      apsViewer.getScreenShot(1920, 1080, url => resolve(url));
+    });
+    if (blobUrl) {
+      pages.push({ name, role, blobUrl, sheetIndex: i + 1, totalSheets: checked.length });
+    }
+  }
+
+  $('btnCompileMultiPagePdf').disabled = false;
+  if (!pages.length) {
+    $('sheetSetSummaryText').textContent = 'Could not capture sheets from viewer.';
+    return;
+  }
+
+  $('sheetSetSummaryText').textContent = `Compiled ${pages.length} sheet(s). Opening print-ready Multi-Page A3 PDF Set...`;
+  const printWin = window.open('', '_blank');
+  if (!printWin) {
+    $('sheetSetSummaryText').textContent = 'Pop-up blocked by browser. Please allow pop-ups to print/save the Multi-Page PDF Sheet Set.';
+    return;
+  }
+
+  const nowStr = new Date().toISOString().slice(0, 16).replace('T', ' ');
+  const pagesHtml = pages.map(p => `
+    <div class="sheet-page">
+      <div class="sheet-frame">
+        <img src="${p.blobUrl}" class="sheet-img" />
+      </div>
+      <div class="titleblock">
+        <div><strong>PROJECT / MODEL:</strong> ${esc(modelName)}</div>
+        <div><strong>SHEET / VIEW:</strong> ${esc(p.name)} (${p.role.toUpperCase()})</div>
+        <div><strong>DATE:</strong> ${nowStr}</div>
+        <div><strong>PAGE:</strong> ${p.sheetIndex} / ${p.totalSheets}</div>
+      </div>
+    </div>
+  `).join('');
+
+  printWin.document.write(`<!doctype html>
+<html>
+<head>
+  <title>${esc(modelName)} - PDF Sheet Set (${pages.length} Sheets)</title>
+  <style>
+    @page { size: A3 landscape; margin: 8mm; }
+    * { box-sizing: border-box; font-family: "Segoe UI", system-ui, sans-serif; }
+    body { margin: 0; background: #1e293b; color: #0f172a; }
+    .print-bar {
+      position: sticky; top: 0; z-index: 10; background: #0f172a; color: #f8fafc;
+      padding: 12px 20px; display: flex; justify-content: space-between; align-items: center;
+      border-bottom: 1px solid #334155;
+    }
+    .print-bar button {
+      background: #10b981; color: #042f2e; font-weight: 700; border: 0;
+      padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 14px;
+    }
+    .sheet-page {
+      background: #ffffff; width: 400mm; height: 277mm; margin: 12px auto;
+      padding: 8mm; display: flex; flex-direction: column; justify-content: space-between;
+      border: 2px solid #0f172a; page-break-after: always;
+    }
+    .sheet-frame {
+      flex: 1; display: flex; align-items: center; justify-content: center;
+      overflow: hidden; border: 1px solid #94a3b8; background: #0f172a;
+    }
+    .sheet-img { max-width: 100%; max-height: 100%; object-fit: contain; }
+    .titleblock {
+      margin-top: 6mm; padding-top: 4mm; border-top: 2px solid #0f172a;
+      display: flex; justify-content: space-between; font-size: 12pt; color: #0f172a;
+    }
+    @media print {
+      body { background: #ffffff; }
+      .print-bar { display: none !important; }
+      .sheet-page { margin: 0; width: 100%; height: 277mm; }
+    }
+  </style>
+</head>
+<body>
+  <div class="print-bar">
+    <div><strong>RBDE Cloud 2D/3D Sheet Set Compiler</strong> — ${pages.length} Sheet(s) Ready (Select "Save as PDF" in Destination)</div>
+    <button onclick="window.print()">Save / Print Multi-Page PDF Set</button>
+  </div>
+  ${pagesHtml}
+  <script>setTimeout(() => window.print(), 600);<\/script>
+</body>
+</html>`);
+  printWin.document.close();
+};
 
 $('btnColorIssues').onclick = () => apply3DHeatmap('issues');
 $('btnColorTeams').onclick = () => apply3DHeatmap('teams');
