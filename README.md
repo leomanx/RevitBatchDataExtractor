@@ -36,8 +36,9 @@ To switch between different ACC Hubs or developer accounts without recompiling t
 
 ![APS Credentials and Hub Settings Modal](docs/images/cloud-extractor-settings.png)
 
-### Local Web Review, Delivery Readiness & QA/QC Dashboard (`RBDE.Dashboard.exe`)
+### Local Web Review, 3D Cloud Viewer (SVF2) & QA/QC Dashboard (`RBDE.Dashboard.exe`)
 Once extraction finishes, click **Open Review Dashboard** to inspect the SQLite database in your browser:
+* **Embedded 60fps 3D Cloud Viewer (`SVF2` Progressive Streaming):** Click **Open 3D Cloud Viewer (SVF2)** in the dashboard header to stream the lightweight translated 3D mesh directly from ACC Cloud (`viewables:read`, 0 Flex Tokens, zero `.rvt` download). Click any row in the Element Explorer, IDS Issues, or Element Diffs table to immediately **isolate and zoom (`fitToView`)** to that object in 3D, click any 3D object to inspect its SQLite parameters, or apply 1-click **3D Heatmaps** (`Color by IDS Issues`, `Color by Team AR/ID/MEP/STR`, `Color by Element Diffs`).
 * **Delivery Readiness & Data Confidence Banner:** Shows whether the batch is ready for delivery, with explicit **Data Confidence (`Evaluated X / Y checks (Z%) | K Not Evaluated`)** that separates *"Missing in model"* from *"Invalid numeric value"* and *"Not evaluated (excluded from extraction filter)"*.
 * **Element-Level Diff (`Added / Removed / Modified Before -> After`):** Compares models strictly by `project_id + lineage_id` and stable `UniqueId` in `output/warehouse.sqlite` so you can see exact parameter changes (`old_value -> new_value`) between model versions.
 * **Issue Lifecycle Tracking (`New / Active / Fixed / Regressed`):** Tracks open issues across runs and verifies when previously reported issues are resolved or reopened.

@@ -3,7 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>BIM Data Review &amp; IDS QA Analytics</title>
+<title>BIM Data Review, 3D Cloud Viewer &amp; IDS QA Analytics</title>
+<link rel="stylesheet" href="https://developer.api.autodesk.com/modelderivative/v2/viewers/7.*/style.min.css" type="text/css">
+<script src="https://developer.api.autodesk.com/modelderivative/v2/viewers/7.*/viewer3D.min.js"></script>
 <style>
 :root{--ink:#0f172a;--muted:#64748b;--bg:#f1f5f9;--line:#cbd5e1;--teal:#0d9488;--teal-dark:#0f766e;--nav:#0b132b;--panel:#ffffff;--warn:#d97706;--red:#dc2626;--blue:#0284c7}
 *{box-sizing:border-box}
@@ -43,6 +45,11 @@ p{margin:3px 0}
 .badge.added{background:#dcfce7;color:#15803d}
 .badge.removed{background:#fee2e2;color:#b91c1c}
 .badge.modified{background:#e0f2fe;color:#0369a1}
+.viewer-dock{background:#0b132b;color:#f8fafc;border:1px solid #1e293b;border-radius:10px;padding:12px 14px;margin-bottom:18px;box-shadow:0 8px 24px rgba(15,23,42,.18)}
+.viewer-toolbar{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+.viewer-canvas-wrap{position:relative;width:100%;height:440px;background:#1e293b;border-radius:8px;overflow:hidden;border:1px solid #334155;transition:height .2s}
+.viewer-canvas-wrap.tall{height:660px}
+.viewer-hud{margin-top:10px;background:#1e293b;border:1px solid #334155;border-radius:6px;padding:8px 12px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;font-size:12px}
 .cards{display:grid;grid-template-columns:repeat(5,1fr);gap:14px;margin:0 0 18px}
 .card,.panel{background:var(--panel);border:1px solid #e2e8f0;border-radius:10px;padding:16px;box-shadow:0 1px 2px rgba(15,23,42,.03)}
 .card strong{font-size:25px;display:block;line-height:1.3;margin:2px 0;color:#0f172a}
@@ -126,11 +133,38 @@ dialog::backdrop{background:rgba(15,23,42,.55)}
       <h1>AEC Parameter Inspection, QA/QC &amp; Decision Support</h1>
       <p id="run" class="muted">Loading batch database...</p>
     </div>
-    <div style="display:flex;gap:8px">
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="button primary" id="btnToggle3DViewer">Open 3D Cloud Viewer (SVF2)</button>
       <button class="button" id="btnToggleCols">Configure Table Columns</button>
       <button class="button" id="print">Print / Export PDF</button>
     </div>
   </header>
+
+  <!-- 3D CLOUD VIEWER DOCK (SVF2 Progressive Streaming) -->
+  <div id="viewerDock" class="viewer-dock hidden">
+    <div class="viewer-toolbar">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <strong style="color:#5eead4;font-size:13.5px">APS 3D Cloud Viewer (SVF2 60fps)</strong>
+        <select id="viewerModelSelect" style="width:280px;margin:0;padding:4px 8px;font-size:12px"></select>
+        <span id="viewerStatusText" style="font-size:11.5px;color:#94a3b8">Ready to stream SVF2 mesh from ACC Cloud.</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+        <button type="button" class="chip-btn" id="btnColorIssues" title="Color elements with High/Medium IDS issues in Red/Amber">3D Heatmap: IDS Issues</button>
+        <button type="button" class="chip-btn" id="btnColorTeams" title="Color failing elements by Team (AR=Red, ID=Purple, MEP=Cyan, STR=Orange)">3D Heatmap: By Team</button>
+        <button type="button" class="chip-btn" id="btnColorDiffs" title="Color Added elements Green and Modified elements Blue">3D Heatmap: Element Diffs</button>
+        <button type="button" class="chip-btn" id="btnReset3D">Show All / Clear Colors</button>
+        <button type="button" class="chip-btn" id="btnExpand3D">Expand Height</button>
+      </div>
+    </div>
+    <div id="apsViewerContainer" class="viewer-canvas-wrap"></div>
+    <div id="viewerSelectionHud" class="viewer-hud">
+      <span id="viewerSelectedInfo">Click any object in 3D or click any row in the tables below to sync selection &amp; zoom camera.</span>
+      <div style="display:flex;gap:8px">
+        <button type="button" class="chip-btn" id="btnInspectSelected3D" disabled>Inspect All SQLite Parameters</button>
+        <button type="button" class="chip-btn" id="btnFilterToSelected3D" disabled>Filter Table to Selected Element</button>
+      </div>
+    </div>
+  </div>
 
   <div id="readinessBanner" class="readiness-banner">
     <div>
@@ -716,7 +750,15 @@ async function load(){
     $('qtoVolumeSub').textContent = volRow ? 'Across ' + fmt(volRow.elem_count) + ' elements with Volume' : 'No numeric Volume in current filter';
 
     document.querySelectorAll('[data-element]').forEach(tr=>{
-      tr.onclick=()=>showDetail(rows[tr.dataset.element]);
+      tr.onclick=()=>{
+        const r = rows[tr.dataset.element];
+        if (!$('viewerDock').classList.contains('hidden')) {
+          zoomAndIsolateIn3D(r.model_id, r.object_id, r.element_id, r);
+        } else {
+          showDetail(r);
+        }
+      };
+      tr.ondblclick=()=>showDetail(rows[tr.dataset.element]);
       tr.onkeydown=e=>{if(e.key==='Enter')tr.click()};
     });
   }catch(e){
@@ -822,7 +864,7 @@ async function loadIssues(){
 
     $('issueSummaryText').textContent = fmt(itotal) + ' rule issue(s) matching filter';
     $('issueRows').innerHTML = currentIssueRows.map(r =>
-      '<tr class="selectable" data-issuemodel="'+r.model_id+'" data-issueelem="'+r.element_id+'" data-issuecat="'+esc(r.category)+'" data-issuefam="'+esc(r.family)+'" data-issuetyp="'+esc(r.type_name)+'" data-issueuid="'+esc(r.unique_id)+'" data-issuepath="'+esc(r.path)+'">' +
+      '<tr class="selectable" data-issuemodel="'+r.model_id+'" data-issueobj="'+(r.object_id||0)+'" data-issueelem="'+r.element_id+'" data-issuecat="'+esc(r.category)+'" data-issuefam="'+esc(r.family)+'" data-issuetyp="'+esc(r.type_name)+'" data-issueuid="'+esc(r.unique_id)+'" data-issuepath="'+esc(r.path)+'">' +
       '<td><span class="badge team">'+esc(r.discipline)+'</span><br>'+badge(r.lifecycle_state||'New')+'</td>' +
       '<td>'+badge(r.severity)+'<br><span class="mono muted">'+esc(r.evaluation_status||'Failed')+'</span></td>' +
       '<td><b>'+esc(r.rule_id)+'</b><br><span class="mono muted">'+esc(r.requirement_id)+'</span></td>' +
@@ -839,8 +881,9 @@ async function loadIssues(){
     $('inext').disabled = (ipage + 1) * 100 >= itotal;
 
     document.querySelectorAll('[data-issueelem]').forEach(tr => {
-      tr.onclick = () => showDetail({
+      const buildObj = () => ({
         model_id: tr.dataset.issuemodel,
+        object_id: Number(tr.dataset.issueobj || 0),
         element_id: tr.dataset.issueelem,
         category: tr.dataset.issuecat,
         family: tr.dataset.issuefam,
@@ -849,6 +892,15 @@ async function loadIssues(){
         path: tr.dataset.issuepath,
         kind: 'instance'
       });
+      tr.onclick = () => {
+        const obj = buildObj();
+        if (!$('viewerDock').classList.contains('hidden')) {
+          zoomAndIsolateIn3D(obj.model_id, obj.object_id, obj.element_id, obj);
+        } else {
+          showDetail(obj);
+        }
+      };
+      tr.ondblclick = () => showDetail(buildObj());
     });
   } catch (e) { fail(e); }
 }
@@ -859,7 +911,7 @@ async function loadDiffs(){
     const d = await api('diffs', p);
     const list = d.rows || [];
     $('diffRows').innerHTML = list.map(r =>
-      '<tr>' +
+      '<tr class="selectable" data-diffmodel="'+r.model_id+'" data-diffobj="'+(r.object_id||0)+'" data-diffelem="'+r.element_id+'" data-diffcat="'+esc(r.category)+'" data-difffam="'+esc(r.family)+'" data-difftyp="'+esc(r.type_name)+'" data-diffuid="'+esc(r.unique_id)+'" data-diffpath="'+esc(r.model_name)+'">' +
       '<td>'+badge(r.change_type)+'</td>' +
       '<td>'+esc(r.model_name)+'</td>' +
       '<td><b class="mono">'+esc(r.element_id)+'</b><br><span class="mono muted">'+esc(r.unique_id)+'</span></td>' +
@@ -870,6 +922,27 @@ async function loadDiffs(){
       '<td class="mono"><b>'+esc(r.new_value || '(removed)')+'</b></td>' +
       '</tr>'
     ).join('') || empty(8, 'No element-level differences recorded against a prior model version in warehouse.sqlite.');
+
+    document.querySelectorAll('[data-diffelem]').forEach(tr => {
+      tr.onclick = () => {
+        const obj = {
+          model_id: tr.dataset.diffmodel,
+          object_id: Number(tr.dataset.diffobj || 0),
+          element_id: tr.dataset.diffelem,
+          category: tr.dataset.diffcat,
+          family: tr.dataset.difffam,
+          type_name: tr.dataset.difftyp,
+          unique_id: tr.dataset.diffuid,
+          path: tr.dataset.diffpath,
+          kind: 'instance'
+        };
+        if (!$('viewerDock').classList.contains('hidden')) {
+          zoomAndIsolateIn3D(obj.model_id, obj.object_id, obj.element_id, obj);
+        } else {
+          showDetail(obj);
+        }
+      };
+    });
   } catch (e) { fail(e); }
 }
 
@@ -972,6 +1045,286 @@ document.querySelectorAll('[data-preset]').forEach(btn => {
     load();
   };
 });
+
+// ============================================================
+// AUTODESK APS 3D CLOUD VIEWER (SVF2 60fps Engine)
+// ============================================================
+let apsViewer = null;
+let viewerInitialized = false;
+let loadedViewerUrn = '';
+let loadedViewerModelId = null;
+let selected3DElementRecord = null;
+
+function ensureViewerInitialized() {
+  return new Promise((resolve, reject) => {
+    if (viewerInitialized && apsViewer) return resolve(apsViewer);
+    if (typeof Autodesk === 'undefined' || !Autodesk.Viewing) {
+      return reject(new Error('Autodesk APS Viewer SDK failed to load from CDN. Check internet connection.'));
+    }
+
+    const options = {
+      env: 'AutodeskProduction2',
+      api: 'streamingV2',
+      getAccessToken: async (onTokenReady) => {
+        try {
+          const tok = await api('viewer-token');
+          onTokenReady(tok.access_token, tok.expires_in || 3500);
+        } catch (err) {
+          $('viewerStatusText').textContent = 'Auth error: ' + err.message;
+        }
+      }
+    };
+
+    Autodesk.Viewing.Initializer(options, () => {
+      const container = $('apsViewerContainer');
+      apsViewer = new Autodesk.Viewing.GuiViewer3D(container, {
+        extensions: ['Autodesk.DocumentBrowser']
+      });
+      const startedCode = apsViewer.start();
+      if (startedCode > 0) {
+        return reject(new Error('WebGL context could not be initialized.'));
+      }
+
+      // 60 FPS Performance Tuning (disable heavy ambient shadows/reflections, enable progressive frame rate optimization)
+      apsViewer.setQualityLevel(/*ambientShadows*/ false, /*antialiasing*/ true);
+      apsViewer.setGroundShadow(false);
+      apsViewer.setGroundReflection(false);
+      apsViewer.setGhosting(true);
+      apsViewer.setOptimizeNavigation(true);
+      apsViewer.setEnvMapBackground(false);
+      apsViewer.setLightPreset(1);
+
+      apsViewer.addEventListener(Autodesk.Viewing.SELECTION_CHANGED_EVENT, onViewer3DSelectionChanged);
+      viewerInitialized = true;
+      resolve(apsViewer);
+    });
+  });
+}
+
+async function load3DModelByModelId(modelId) {
+  const mObj = (overview?.models || []).find(m => String(m.model_id) === String(modelId)) || (overview?.models || [])[0];
+  if (!mObj) {
+    $('viewerStatusText').textContent = 'No model in current batch.';
+    return;
+  }
+
+  const urn = (mObj.derivative_urn || '').trim();
+  if (!urn) {
+    $('viewerStatusText').textContent = 'Model URN not available for ' + base(mObj.path) + '. Run a fresh cloud extraction to record its URN.';
+    return;
+  }
+
+  $('viewerModelSelect').value = String(mObj.model_id);
+  if (loadedViewerUrn === urn && apsViewer && apsViewer.model) {
+    loadedViewerModelId = mObj.model_id;
+    return;
+  }
+
+  $('viewerStatusText').textContent = 'Streaming lightweight SVF2 3D mesh for ' + base(mObj.path) + '...';
+  const viewer = await ensureViewerInitialized();
+
+  return new Promise((resolve, reject) => {
+    const docId = urn.startsWith('urn:') ? urn : 'urn:' + urn;
+    Autodesk.Viewing.Document.load(
+      docId,
+      (viewerDoc) => {
+        const defaultGeom = viewerDoc.getRoot().getDefaultGeometry();
+        viewer.loadDocumentNode(viewerDoc, defaultGeom).then(() => {
+          loadedViewerUrn = urn;
+          loadedViewerModelId = mObj.model_id;
+          $('viewerStatusText').textContent = 'Loaded SVF2: ' + base(mObj.path) + ' (60fps WebGL active)';
+          resolve();
+        });
+      },
+      (errCode, errMsg) => {
+        $('viewerStatusText').textContent = 'Failed to load SVF2 (' + errCode + '): ' + errMsg;
+        reject(new Error(errMsg));
+      }
+    );
+  });
+}
+
+async function onViewer3DSelectionChanged(ev) {
+  const dbIds = ev.dbIdArray || [];
+  if (!dbIds.length || !apsViewer) {
+    selected3DElementRecord = null;
+    $('viewerSelectedInfo').textContent = 'Click any object in 3D or click any row in the tables below to sync selection & zoom camera.';
+    $('btnInspectSelected3D').disabled = true;
+    $('btnFilterToSelected3D').disabled = true;
+    return;
+  }
+
+  const dbId = dbIds[0];
+  const mId = loadedViewerModelId || $('viewerModelSelect').value || 1;
+
+  // Also read the Viewer node name (e.g. "Basic Wall [345678]") in case object_id was 0 in older DBs
+  let parsedRevitId = 0;
+  const tree = apsViewer.model?.getInstanceTree();
+  if (tree) {
+    const nodeName = tree.getNodeName(dbId) || '';
+    const m = nodeName.match(/\[(\d+)\]\s*$/);
+    if (m) parsedRevitId = Number(m[1]);
+  }
+
+  try {
+    const rec = await api('lookup-by-dbid', new URLSearchParams({ model: mId, dbid: dbId, element: parsedRevitId }));
+    if (rec && rec.element_id) {
+      selected3DElementRecord = rec;
+      $('viewerSelectedInfo').innerHTML =
+        '<b>Selected in 3D:</b> [' + esc(rec.category) + '] ' + esc(rec.family) + ' : ' + esc(rec.type_name) +
+        ' &nbsp;|&nbsp; <span class="mono">Revit ID: <b>' + esc(rec.element_id) + '</b> (dbId: ' + dbId + ')</span>';
+      $('btnInspectSelected3D').disabled = false;
+      $('btnFilterToSelected3D').disabled = false;
+    } else {
+      selected3DElementRecord = null;
+      $('viewerSelectedInfo').innerHTML = '<b>Selected 3D Node dbId:</b> ' + dbId + (parsedRevitId ? ' (Revit ID: ' + parsedRevitId + ')' : '');
+      $('btnInspectSelected3D').disabled = true;
+      $('btnFilterToSelected3D').disabled = !parsedRevitId;
+      if (parsedRevitId) {
+        selected3DElementRecord = { model_id: mId, element_id: parsedRevitId };
+      }
+    }
+  } catch { }
+}
+
+async function zoomAndIsolateIn3D(modelId, objectId, revitElementId, rowRecord) {
+  try {
+    if ($('viewerDock').classList.contains('hidden')) {
+      $('viewerDock').classList.remove('hidden');
+      $('btnToggle3DViewer').textContent = 'Hide 3D Cloud Viewer';
+    }
+    await load3DModelByIdOrDefault(modelId);
+    if (!apsViewer || !apsViewer.model) return;
+
+    let targetDbId = Number(objectId || 0);
+
+    if (targetDbId > 0) {
+      apsViewer.isolate([targetDbId]);
+      apsViewer.select([targetDbId]);
+      apsViewer.fitToView([targetDbId]);
+      if (rowRecord) {
+        selected3DElementRecord = rowRecord;
+        $('viewerSelectedInfo').innerHTML =
+          '<b>Isolated in 3D:</b> [' + esc(rowRecord.category) + '] ' + esc(rowRecord.family) + ' : ' + esc(rowRecord.type_name) +
+          ' &nbsp;|&nbsp; <span class="mono">Revit ID: <b>' + esc(revitElementId) + '</b> (dbId: ' + targetDbId + ')</span>';
+        $('btnInspectSelected3D').disabled = false;
+        $('btnFilterToSelected3D').disabled = false;
+      }
+      return;
+    }
+
+    // Fallback for older databases where object_id was 0: search by Revit ElementId in Viewer
+    if (revitElementId) {
+      apsViewer.search(String(revitElementId), (foundIds) => {
+        if (foundIds && foundIds.length > 0) {
+          apsViewer.isolate(foundIds);
+          apsViewer.select(foundIds);
+          apsViewer.fitToView(foundIds);
+        }
+      }, () => {}, ['name']);
+    }
+  } catch (e) {
+    $('viewerStatusText').textContent = e.message;
+  }
+}
+
+async function load3DModelByIdOrDefault(modelId) {
+  const targetId = modelId || $('viewerModelSelect').value || (overview?.models?.[0]?.model_id);
+  if (targetId) await load3DModelByModelId(targetId);
+}
+
+async function apply3DHeatmap(mode) {
+  try {
+    await load3DModelByIdOrDefault();
+    if (!apsViewer || !apsViewer.model || typeof THREE === 'undefined') return;
+
+    const mId = loadedViewerModelId || $('viewerModelSelect').value || 1;
+    const data = await api('viewer-theming', new URLSearchParams({ model: mId }));
+    apsViewer.clearThemingColors(apsViewer.model);
+
+    const cRed = new THREE.Vector4(0.94, 0.20, 0.20, 0.92);
+    const cAmber = new THREE.Vector4(0.96, 0.62, 0.04, 0.92);
+    const cPurple = new THREE.Vector4(0.66, 0.33, 0.97, 0.92);
+    const cCyan = new THREE.Vector4(0.02, 0.71, 0.83, 0.92);
+    const cGreen = new THREE.Vector4(0.06, 0.73, 0.51, 0.92);
+    const cBlue = new THREE.Vector4(0.15, 0.39, 0.92, 0.92);
+
+    const themedIds = [];
+
+    if (mode === 'issues' || mode === 'teams') {
+      for (const iss of (data.issues || [])) {
+        const dbId = Number(iss.object_id || 0);
+        if (dbId <= 0) continue;
+        themedIds.push(dbId);
+        let col = cRed;
+        if (mode === 'issues') {
+          col = iss.severity === 'High' ? cRed : cAmber;
+        } else {
+          col = iss.discipline === 'AR' ? cRed : (iss.discipline === 'ID' ? cPurple : (iss.discipline === 'MEP' ? cCyan : cAmber));
+        }
+        apsViewer.setThemingColor(dbId, col, apsViewer.model, true);
+      }
+    } else if (mode === 'diffs') {
+      for (const df of (data.diffs || [])) {
+        const dbId = Number(df.object_id || 0);
+        if (dbId <= 0) continue;
+        themedIds.push(dbId);
+        const col = df.change_type === 'Added' ? cGreen : cBlue;
+        apsViewer.setThemingColor(dbId, col, apsViewer.model, true);
+      }
+    }
+
+    if (themedIds.length > 0) {
+      apsViewer.isolate(themedIds);
+      apsViewer.fitToView(themedIds);
+      $('viewerStatusText').textContent = 'Applied 3D Heatmap (' + mode + ') across ' + fmt(themedIds.length) + ' element(s).';
+    } else {
+      apsViewer.isolate([]);
+      $('viewerStatusText').textContent = 'No matching 3D object IDs for ' + mode + ' in this model.';
+    }
+  } catch (e) {
+    $('viewerStatusText').textContent = e.message;
+  }
+}
+
+$('btnToggle3DViewer').onclick = async () => {
+  const dock = $('viewerDock');
+  const isOpening = dock.classList.contains('hidden');
+  dock.classList.toggle('hidden', !isOpening);
+  $('btnToggle3DViewer').textContent = isOpening ? 'Hide 3D Cloud Viewer' : 'Open 3D Cloud Viewer (SVF2)';
+  if (isOpening) {
+    await load3DModelByIdOrDefault($('model').value);
+    if (apsViewer) apsViewer.resize();
+  }
+};
+
+$('viewerModelSelect').onchange = () => load3DModelByModelId($('viewerModelSelect').value);
+$('btnColorIssues').onclick = () => apply3DHeatmap('issues');
+$('btnColorTeams').onclick = () => apply3DHeatmap('teams');
+$('btnColorDiffs').onclick = () => apply3DHeatmap('diffs');
+$('btnReset3D').onclick = () => {
+  if (!apsViewer || !apsViewer.model) return;
+  apsViewer.clearThemingColors(apsViewer.model);
+  apsViewer.isolate([]);
+  apsViewer.select([]);
+  apsViewer.fitToView();
+  $('viewerStatusText').textContent = 'Reset 3D view and cleared theming colors.';
+};
+$('btnExpand3D').onclick = () => {
+  const wrap = $('apsViewerContainer');
+  const isTall = wrap.classList.toggle('tall');
+  $('btnExpand3D').textContent = isTall ? 'Compact Height' : 'Expand Height';
+  if (apsViewer) setTimeout(() => apsViewer.resize(), 220);
+};
+$('btnInspectSelected3D').onclick = () => {
+  if (selected3DElementRecord) showDetail(selected3DElementRecord);
+};
+$('btnFilterToSelected3D').onclick = () => {
+  if (!selected3DElementRecord) return;
+  $('filters').elements['search'].value = String(selected3DElementRecord.element_id || '');
+  switchTab('review');
+  apply();
+};
 
 $('btnToggleCols').onclick = () => $('colPickerDrawer').classList.toggle('hidden');
 $('colSearch').oninput = renderColumnPills;
@@ -1126,7 +1479,7 @@ $('exportAll').onclick=async()=>{
     renderColumnPills();
 
     for(const m of overview.models){
-      for(const id of ['model','errorModel','issueModel'])
+      for(const id of ['model','errorModel','issueModel','viewerModelSelect'])
         $(id).add(new Option(base(m.path)+' (ID '+m.model_id+')',m.model_id));
     }
     for(const c of overview.categories)

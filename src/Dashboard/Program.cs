@@ -1,11 +1,88 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Net;
+using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Net.Sockets;
 using System.Reflection;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Data.Sqlite;
+
+HttpClient viewerHttp = new() { Timeout = TimeSpan.FromSeconds(30) };
+string? cachedViewerToken = null;
+DateTime cachedViewerTokenExpiry = DateTime.MinValue;
+
+async Task<object> GetViewerTokenAsync()
+{
+    if (cachedViewerToken != null && DateTime.UtcNow < cachedViewerTokenExpiry)
+    {
+        var rem = (int)Math.Max(60, (cachedViewerTokenExpiry - DateTime.UtcNow).TotalSeconds);
+        return new { access_token = cachedViewerToken, expires_in = rem };
+    }
+
+    string? clientId = null;
+    string? clientSecret = null;
+    var credPath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "MMK_BIM", "RBDE", "credentials.dpapi.json");
+
+    if (OperatingSystem.IsWindows() && File.Exists(credPath))
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(File.ReadAllText(credPath));
+            clientId = doc.RootElement.TryGetProperty("clientId", out var cid) ? cid.GetString() : null;
+            if (doc.RootElement.TryGetProperty("encryptedSecret", out var enc) && !string.IsNullOrWhiteSpace(enc.GetString()))
+            {
+                var entropy = Encoding.UTF8.GetBytes("RBDE.CloudApp.ApsSecret.v1");
+                var cipherBytes = Convert.FromBase64String(enc.GetString()!);
+                var plainBytes = ProtectedData.Unprotect(cipherBytes, entropy, DataProtectionScope.CurrentUser);
+                clientSecret = Encoding.UTF8.GetString(plainBytes);
+            }
+        }
+        catch { }
+    }
+
+    clientId ??= Environment.GetEnvironmentVariable("APS_CLIENT_ID", EnvironmentVariableTarget.Process)
+              ?? Environment.GetEnvironmentVariable("APS_CLIENT_ID", EnvironmentVariableTarget.User);
+    clientSecret ??= Environment.GetEnvironmentVariable("APS_CLIENT_SECRET", EnvironmentVariableTarget.Process)
+                  ?? Environment.GetEnvironmentVariable("APS_CLIENT_SECRET", EnvironmentVariableTarget.User);
+
+    if (string.IsNullOrWhiteSpace(clientId) || string.IsNullOrWhiteSpace(clientSecret))
+        throw new InvalidOperationException("APS credentials not found in DPAPI store. Open RBDE.CloudApp Settings to configure credentials.");
+
+    var basic = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{clientId.Trim()}:{clientSecret.Trim()}"));
+    using var req = new HttpRequestMessage(HttpMethod.Post, "https://developer.api.autodesk.com/authentication/v2/token");
+    req.Headers.Authorization = new AuthenticationHeaderValue("Basic", basic);
+    req.Content = new FormUrlEncodedContent(new Dictionary<string, string>
+    {
+        ["grant_type"] = "client_credentials",
+        ["scope"] = "viewables:read data:read"
+    });
+
+    using var resp = await viewerHttp.SendAsync(req);
+    var body = await resp.Content.ReadAsStringAsync();
+    if (!resp.IsSuccessStatusCode)
+        throw new InvalidOperationException($"APS token request failed ({(int)resp.StatusCode}): {body}");
+
+    using var tokDoc = JsonDocument.Parse(body);
+    cachedViewerToken = tokDoc.RootElement.GetProperty("access_token").GetString()!;
+    var exp = tokDoc.RootElement.GetProperty("expires_in").GetInt32();
+    cachedViewerTokenExpiry = DateTime.UtcNow.AddSeconds(exp - 60);
+    return new { access_token = cachedViewerToken, expires_in = exp };
+}
+
+static string ToBase64UrlUrn(string versionId)
+{
+    if (string.IsNullOrWhiteSpace(versionId)) return "";
+    if (!versionId.StartsWith("urn:", StringComparison.OrdinalIgnoreCase)) return versionId;
+    return Convert.ToBase64String(Encoding.UTF8.GetBytes(versionId))
+        .TrimEnd('=')
+        .Replace('+', '-')
+        .Replace('/', '_');
+}
 
 if (args.Length == 0 || !File.Exists(args[0]))
 {
@@ -63,7 +140,15 @@ while (listener.IsListening)
         context.Response.Headers["Cache-Control"] = "no-store";
         context.Response.Headers["X-Content-Type-Options"] = "nosniff";
         context.Response.Headers["Referrer-Policy"] = "no-referrer";
-        context.Response.Headers["Content-Security-Policy"] = "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'";
+        context.Response.Headers["Content-Security-Policy"] =
+            "default-src 'self' https://developer.api.autodesk.com https://*.autodesk.com blob: data:; " +
+            "script-src 'self' 'unsafe-inline' 'unsafe-eval' blob: https://developer.api.autodesk.com https://*.autodesk.com; " +
+            "style-src 'self' 'unsafe-inline' https://developer.api.autodesk.com https://*.autodesk.com https://fonts.googleapis.com; " +
+            "connect-src 'self' https://developer.api.autodesk.com https://*.autodesk.com https://*.s3.amazonaws.com https://*.amazonaws.com wss://*.autodesk.com blob: data:; " +
+            "img-src 'self' data: blob: https://developer.api.autodesk.com https://*.autodesk.com; " +
+            "font-src 'self' data: https://developer.api.autodesk.com https://*.autodesk.com https://fonts.gstatic.com; " +
+            "worker-src 'self' blob: https://developer.api.autodesk.com; " +
+            "frame-ancestors 'none'";
 
         var route = context.Request.Url.AbsolutePath[('/' + token + '/').Length..];
         if (route == "")
@@ -159,12 +244,15 @@ while (listener.IsListening)
 
             object result = route switch
             {
+                "api/viewer-token" => await GetViewerTokenAsync(),
                 "api/overview" => BuildOverview(),
                 "api/elements" => BuildElementsResponse(),
                 "api/heatmap" => BuildHeatmapResponse(),
                 "api/values" => BuildValuesDistributionResponse(),
                 "api/issues" => BuildIssuesResponse(),
                 "api/diffs" => BuildDiffsResponse(),
+                "api/viewer-theming" => BuildViewerThemingResponse(),
+                "api/lookup-by-dbid" => BuildLookupByDbIdResponse(),
                 "api/detail" => Query(
                     "SELECT scope,parameter_key,name,storage_type,has_value,raw_value,display_value,unit_type_id FROM parameters WHERE model_id=$model AND element_id=$element ORDER BY scope,name",
                     new() { ["$model"] = q["model"] ?? "", ["$element"] = q["element"] ?? "" }),
@@ -202,6 +290,7 @@ while (listener.IsListening)
                     : [];
 
                 var historyRuns = new List<Dictionary<string, object?>>();
+                var warehouseUrnFallback = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
                 if (File.Exists(warehousePath))
                 {
                     try
@@ -209,14 +298,38 @@ while (listener.IsListening)
                         using var wConn = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = warehousePath, Mode = SqliteOpenMode.ReadOnly, Pooling = false }.ToString());
                         wConn.Open();
                         historyRuns = Query("SELECT * FROM runs ORDER BY started_utc DESC LIMIT 12", null, wConn);
+                        var mvRows = Query("SELECT model_name, version_id FROM model_versions WHERE version_id IS NOT NULL AND version_id<>'' ORDER BY recorded_utc DESC", null, wConn);
+                        foreach (var mv in mvRows)
+                        {
+                            var mName = mv["model_name"]?.ToString() ?? "";
+                            var vId = mv["version_id"]?.ToString() ?? "";
+                            if (!string.IsNullOrEmpty(mName) && !string.IsNullOrEmpty(vId) && !warehouseUrnFallback.ContainsKey(mName))
+                            {
+                                warehouseUrnFallback[mName] = ToBase64UrlUrn(vId);
+                            }
+                        }
                     }
                     catch { }
+                }
+
+                var modelRows = Query("SELECT m.*, (SELECT count(*) FROM errors r WHERE r.model_id=m.model_id) error_count FROM models m ORDER BY model_id");
+                foreach (var mr in modelRows)
+                {
+                    var existingUrn = mr.TryGetValue("derivative_urn", out var uObj) ? uObj?.ToString() ?? "" : "";
+                    if (string.IsNullOrWhiteSpace(existingUrn))
+                    {
+                        var mPath = mr["path"]?.ToString() ?? "";
+                        if (warehouseUrnFallback.TryGetValue(mPath, out var fbUrn))
+                        {
+                            mr["derivative_urn"] = fbUrn;
+                        }
+                    }
                 }
 
                 return new
                 {
                     run = Path.GetFileName(runDir),
-                    models = Query("SELECT m.*, (SELECT count(*) FROM errors r WHERE r.model_id=m.model_id) error_count FROM models m ORDER BY model_id"),
+                    models = modelRows,
                     categories = Query("SELECT DISTINCT category FROM elements WHERE category IS NOT NULL AND category<>'' ORDER BY category"),
                     levels,
                     totals = Query("SELECT kind, count(*) count FROM elements GROUP BY kind"),
@@ -320,7 +433,7 @@ while (listener.IsListening)
                 var tot = Query("SELECT count(*) count FROM issues i" + whereClause, iVals);
                 var byDisc = Query("SELECT discipline, severity, count(*) count FROM issues GROUP BY discipline, severity ORDER BY discipline, severity");
                 var byRule = Query("SELECT rule_id, requirement_id, discipline, severity, parameter_name, count(*) count FROM issues GROUP BY rule_id, requirement_id, discipline, severity, parameter_name ORDER BY count DESC");
-                var rows = Query($"SELECT i.*, m.path FROM issues i LEFT JOIN models m USING(model_id){whereClause} ORDER BY i.issue_id LIMIT {limit} OFFSET {offset}", iVals);
+                var rows = Query($"SELECT i.*, m.path, e.object_id FROM issues i LEFT JOIN models m USING(model_id) LEFT JOIN elements e ON e.model_id=i.model_id AND e.element_id=i.element_id{whereClause} ORDER BY i.issue_id LIMIT {limit} OFFSET {offset}", iVals);
 
                 return new
                 {
@@ -352,7 +465,7 @@ while (listener.IsListening)
                 var whereClause = " WHERE " + string.Join(" AND ", dTerms);
                 var tot = Query("SELECT count(*) count FROM element_diffs d" + whereClause, dVals);
                 var byType = Query("SELECT change_type, count(*) count FROM element_diffs GROUP BY change_type");
-                var rows = Query($"SELECT d.* FROM element_diffs d{whereClause} ORDER BY d.diff_id LIMIT 200", dVals);
+                var rows = Query($"SELECT d.*, m.path AS model_name, e.object_id FROM element_diffs d LEFT JOIN models m USING(model_id) LEFT JOIN elements e ON e.model_id=d.model_id AND e.element_id=d.element_id{whereClause} ORDER BY d.diff_id LIMIT 200", dVals);
 
                 return new
                 {
@@ -360,6 +473,30 @@ while (listener.IsListening)
                     byType,
                     rows
                 };
+            }
+
+            object BuildViewerThemingResponse()
+            {
+                var targetModel = q["model"] ?? "1";
+                var tVals = new Dictionary<string, object> { ["$model"] = targetModel };
+                var issueMap = TableExists("issues")
+                    ? Query("SELECT i.element_id, e.object_id, i.discipline, i.severity, i.lifecycle_state, i.rule_id FROM issues i LEFT JOIN elements e ON e.model_id=i.model_id AND e.element_id=i.element_id WHERE i.model_id=$model", tVals)
+                    : [];
+                var diffMap = TableExists("element_diffs")
+                    ? Query("SELECT d.element_id, e.object_id, d.change_type FROM element_diffs d LEFT JOIN elements e ON e.model_id=d.model_id AND e.element_id=d.element_id WHERE d.model_id=$model", tVals)
+                    : [];
+                return new { issues = issueMap, diffs = diffMap };
+            }
+
+            object BuildLookupByDbIdResponse()
+            {
+                var targetModel = q["model"] ?? "1";
+                var dbId = q["dbid"] ?? "0";
+                var revitId = q["element"] ?? "0";
+                var rows = Query(
+                    "SELECT e.*, m.path FROM elements e JOIN models m USING(model_id) WHERE e.model_id=$model AND (e.object_id=$dbid OR e.element_id=$elid) LIMIT 1",
+                    new() { ["$model"] = targetModel, ["$dbid"] = dbId, ["$elid"] = revitId });
+                return rows.FirstOrDefault() ?? new Dictionary<string, object?>();
             }
 
             object BuildElementsResponse()
