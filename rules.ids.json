@@ -1,9 +1,9 @@
 {
-  "schema": "buildingSMART-IDS-1.0-JSON",
+  "schema": "RBDE-IDS-Inspired-1.0-JSON",
   "info": {
-    "title": "MMK Standard AEC Information Delivery Specification (IDS)",
-    "version": "1.0.0",
-    "description": "Automated BIM QA/QC rules aligned with buildingSMART IDS facets and ISO 19650 EIR requirements, grouped by responsible team code (AR, ID, MEP, STR)."
+    "title": "MMK Standard AEC Information Delivery Specification (IDS-Inspired JSON Rules)",
+    "version": "1.1.0",
+    "description": "Automated BIM QA/QC rules modeled on buildingSMART IDS facets and ISO 19650 EIR requirements, grouped by responsible team code (AR, ID, MEP, STR) with scope/propertySet disambiguation and numeric bound checks."
   },
   "specifications": [
     {

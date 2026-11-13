@@ -164,6 +164,7 @@ while (listener.IsListening)
                 "api/heatmap" => BuildHeatmapResponse(),
                 "api/values" => BuildValuesDistributionResponse(),
                 "api/issues" => BuildIssuesResponse(),
+                "api/diffs" => BuildDiffsResponse(),
                 "api/detail" => Query(
                     "SELECT scope,parameter_key,name,storage_type,has_value,raw_value,display_value,unit_type_id FROM parameters WHERE model_id=$model AND element_id=$element ORDER BY scope,name",
                     new() { ["$model"] = q["model"] ?? "", ["$element"] = q["element"] ?? "" }),
@@ -192,6 +193,14 @@ while (listener.IsListening)
                     ? Query("SELECT discipline, severity, count(*) count FROM issues GROUP BY discipline, severity")
                     : [];
 
+                var confidenceSummary = TableExists("confidence_summary")
+                    ? Query("SELECT * FROM confidence_summary LIMIT 1").FirstOrDefault()
+                    : null;
+
+                var diffSummary = TableExists("element_diffs")
+                    ? Query("SELECT change_type, count(*) count FROM element_diffs GROUP BY change_type")
+                    : [];
+
                 var historyRuns = new List<Dictionary<string, object?>>();
                 if (File.Exists(warehousePath))
                 {
@@ -213,6 +222,8 @@ while (listener.IsListening)
                     totals = Query("SELECT kind, count(*) count FROM elements GROUP BY kind"),
                     errors = Query("SELECT count(*) count FROM errors"),
                     issueSummary = issueTotals,
+                    confidenceSummary,
+                    diffSummary,
                     historyRuns,
                     priorityColumns = priorityCols,
                     availableParameters = availParams
@@ -299,6 +310,8 @@ while (listener.IsListening)
                 if (!string.IsNullOrEmpty(q["severity"])) { iTerms.Add("i.severity=$sev"); iVals["$sev"] = q["severity"]!; }
                 if (!string.IsNullOrEmpty(q["rule"])) { iTerms.Add("i.rule_id=$rule"); iVals["$rule"] = q["rule"]!; }
                 if (!string.IsNullOrEmpty(q["model"])) { iTerms.Add("i.model_id=$model"); iVals["$model"] = q["model"]!; }
+                if (!string.IsNullOrEmpty(q["lifecycle"])) { iTerms.Add("i.lifecycle_state=$lstate"); iVals["$lstate"] = q["lifecycle"]!; }
+                if (!string.IsNullOrEmpty(q["evalStatus"])) { iTerms.Add("i.evaluation_status=$estatus"); iVals["$estatus"] = q["evalStatus"]!; }
 
                 var whereClause = " WHERE " + string.Join(" AND ", iTerms);
                 int limit = int.TryParse(q["limit"], out var rl) ? Math.Clamp(rl, 1, 5000) : 100;
@@ -314,6 +327,37 @@ while (listener.IsListening)
                     total = tot[0]["count"],
                     byDiscipline = byDisc,
                     byRule,
+                    rows
+                };
+            }
+
+            object BuildDiffsResponse()
+            {
+                if (!TableExists("element_diffs"))
+                {
+                    return new
+                    {
+                        total = 0,
+                        byType = Array.Empty<object>(),
+                        rows = Array.Empty<object>()
+                    };
+                }
+
+                var dVals = new Dictionary<string, object>();
+                var dTerms = new List<string> { "1=1" };
+                if (!string.IsNullOrEmpty(q["changeType"])) { dTerms.Add("d.change_type=$ctype"); dVals["$ctype"] = q["changeType"]!; }
+                if (!string.IsNullOrEmpty(q["model"])) { dTerms.Add("d.model_id=$model"); dVals["$model"] = q["model"]!; }
+                if (!string.IsNullOrEmpty(q["category"])) { dTerms.Add("d.category=$cat"); dVals["$cat"] = q["category"]!; }
+
+                var whereClause = " WHERE " + string.Join(" AND ", dTerms);
+                var tot = Query("SELECT count(*) count FROM element_diffs d" + whereClause, dVals);
+                var byType = Query("SELECT change_type, count(*) count FROM element_diffs GROUP BY change_type");
+                var rows = Query($"SELECT d.* FROM element_diffs d{whereClause} ORDER BY d.diff_id LIMIT 200", dVals);
+
+                return new
+                {
+                    total = tot[0]["count"],
+                    byType,
                     rows
                 };
             }

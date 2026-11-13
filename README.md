@@ -31,13 +31,17 @@ Built with C# and WPF (.NET 8). Select your **Hub**, **Project**, and **Folder**
 
 ![APS Cloud Batch Extractor Main Window](docs/images/cloud-extractor-main.png)
 
-### Credentials & Hub Sync Popup
-To switch between different ACC Hubs or developer accounts without recompiling the code, click **Configure Credentials** in the top right. The popup saves your `APS_CLIENT_ID` and `APS_CLIENT_SECRET` directly to your local Windows User environment variables and immediately syncs your accessible Hubs and Projects.
+### Credentials & DPAPI Encrypted Hub Sync Popup
+To switch between different ACC Hubs or developer accounts without recompiling the code, click **Configure Credentials** in the top right. The popup encrypts your `APS_CLIENT_SECRET` at rest using **Windows DPAPI (`ProtectedData.Protect`, `CurrentUser` scope)** inside `%LOCALAPPDATA%\MMK_BIM\RBDE\credentials.dpapi.json`, automatically removes any legacy plaintext secret from Windows User environment variables, and immediately syncs your accessible Hubs and Projects.
 
 ![APS Credentials and Hub Settings Modal](docs/images/cloud-extractor-settings.png)
 
-### Local Web Review & QA/QC Dashboard (`RBDE.Dashboard.exe`)
-Once extraction finishes, click **Open Review Dashboard** to inspect the SQLite database in your browser. You can filter by model, category, level, or missing parameters, toggle dynamic parameter columns on the fly, check parameter fill rates (% completeness), and export a flat Wide CSV table for Power BI or Excel.
+### Local Web Review, Delivery Readiness & QA/QC Dashboard (`RBDE.Dashboard.exe`)
+Once extraction finishes, click **Open Review Dashboard** to inspect the SQLite database in your browser:
+* **Delivery Readiness & Data Confidence Banner:** Shows whether the batch is ready for delivery, with explicit **Data Confidence (`Evaluated X / Y checks (Z%) | K Not Evaluated`)** that separates *"Missing in model"* from *"Invalid numeric value"* and *"Not evaluated (excluded from extraction filter)"*.
+* **Element-Level Diff (`Added / Removed / Modified Before -> After`):** Compares models strictly by `project_id + lineage_id` and stable `UniqueId` in `output/warehouse.sqlite` so you can see exact parameter changes (`old_value -> new_value`) between model versions.
+* **Issue Lifecycle Tracking (`New / Active / Fixed / Regressed`):** Tracks open issues across runs and verifies when previously reported issues are resolved or reopened.
+* **Revit Fix Assistant (`src/Revit/FixAssistantCommand.cs`):** Loads team fix packages (`AR`, `ID`, `MEP`, `STR`) inside Revit, verifies that the open `.rvt` document matches the source model, guards `ElementId` fallback by category, and previews the **Type vs. Instance blast-radius impact** (how many instances share a Family Type) before committing any parameter transaction.
 
 ![AEC Data Review Dashboard](docs/images/review-dashboard.png)
 
@@ -95,7 +99,7 @@ Tested on a production **357.62 MB Revit 2026 Architecture model** hosted on ACC
 ### 1. Prerequisite: ACC Custom Integration
 1. Create a **Server-to-Server (2-Legged OAuth)** app in the [Autodesk Platform Services Portal](https://aps.autodesk.com/) with **Data Management API** and **Model Derivative API** enabled.
 2. In **ACC Account Admin > Custom Integrations**, add your **Client ID** with access to **DOCS / Project Administration**.
-3. **Security Rule:** Never hardcode your Client ID or Secret into code files. Enter them inside the app's **Configure Credentials** popup (which stores them in your local Windows User environment variables).
+3. **Security Rule:** Never hardcode your Client ID or Secret into code files. Enter them inside the app's **Configure Credentials** popup, which encrypts `APS_CLIENT_SECRET` using Windows DPAPI (`CurrentUser` scope) at `%LOCALAPPDATA%\MMK_BIM\RBDE\credentials.dpapi.json`.
 
 ### 2. Build & Run
 ```powershell
@@ -103,15 +107,17 @@ Tested on a production **357.62 MB Revit 2026 Architecture model** hosted on ACC
 dotnet build src/Dashboard/Dashboard.csproj -c Release
 dotnet publish src/CloudApp/CloudApp.csproj -c Release -o bin/CloudApp
 
-# Start the application
+# Start the application (interactive UI or headless scheduled mode)
 ./bin/CloudApp/RBDE.CloudApp.exe
+./bin/CloudApp/RBDE.CloudApp.exe --headless --project "Project Name"
 ```
 
-### 3. Output Files
-Every run generates a timestamped folder under `output/batch-YYYYMMDD-HHMMSS/` with:
+### 3. Output Files & IDS-Inspired Rule Schema
+Every run generates a timestamped folder under `output/batch-YYYYMMDD-HHMMSS/` and updates `output/warehouse.sqlite`:
 * **`elements_wide.csv`**: Pivoted flat table (`1 row = 1 element`) where your selected parameters (`Level`, `Type Mark`, `Mark`, `Comments`, `Area`, `Volume`, `Material`, `Fire Rating`, `Workset`, etc.) are ready-to-use column headers for Power BI and Excel.
-* **`extract.sqlite`**: Local SQLite database used by the Web Review Dashboard and custom SQL queries (`queries.sql`).
-* **`elements.csv` & `parameters.csv`**: Normalized relational tables with raw numeric values and units.
+* **`extract.sqlite` & `output/warehouse.sqlite`**: Per-run SQLite database and cross-run historical warehouse storing `models`, `elements`, `parameters`, `issues`, `confidence_summary`, `element_diffs`, and `issue_registry`.
+* **`rules.ids.json`**: Uses an internal JSON rule schema (`RBDE-IDS-Inspired-1.0-JSON`) modeled on buildingSMART IDS facets (`applicability` + `requirements` with `propertySet`, `scope`, `pattern`, `minInclusive`, and `maxInclusive`) and grouped by responsible team code (`AR`, `ID`, `MEP`, `STR`).
+* **`fix_candidates.json`**: Team-filtered issue package consumed by the Revit Fix Assistant (`FixAssistantCommand`).
 
 ---
 
@@ -128,7 +134,7 @@ If your team plans to run this at scale across dozens of projects, here is the r
 | **Design Automation API *(Optional Fallback in `src/Automation`)*** | Running a headless Revit cloud VM | **6 Flex Tokens / hour** (~$18.00 USD per VM hour) |
 | **Enterprise High-Volume Scaling** | Staying within APS rate limits (~100-500 requests/min) when pulling 100+ models at once | **$0.00 API fee** for GET requests; if you need paid tokens for custom POST translations or Design Automation, an **APS Flex Pack starts at 100 Tokens (~$300 USD/year)**. |
 
-**Bottom Line on Cost:** As long as your `.rvt` models live on ACC / BIM 360 Docs, running `RBDE.CloudApp` via the Model Derivative GET API costs **$0 in APS tokens**, even if you extract 30 to 100+ models every week.
+**Note on APS Offerings & Pricing:** Reading already-translated ACC / BIM 360 Docs properties via Model Derivative GET endpoints does not trigger new cloud translation jobs. However, Autodesk APS tier limits, rate limits, and token pricing for custom POST translations or Design Automation jobs depend on your organization's active Autodesk APS offering and contract; always verify current quotas in your APS Developer Portal.
 
 ---
 

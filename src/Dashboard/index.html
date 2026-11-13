@@ -32,7 +32,17 @@ p{margin:3px 0}
 .chip-btn{background:#f1f5f9;border:1px solid #cbd5e1;border-radius:5px;padding:4px 10px;font-size:11.5px;font-weight:600;color:#334155}
 .chip-btn:hover{background:#e2e8f0;color:#0f172a}
 .chip-btn.active{background:#ccfbf1;border-color:#0d9488;color:#0f766e}
-.coverage-bar{background:#e0f2fe;border-left:4px solid var(--blue);padding:9px 14px;border-radius:6px;font-size:12px;color:#0c4a6e;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px}
+.coverage-bar{background:#e0f2fe;border-left:4px solid var(--blue);padding:9px 14px;border-radius:6px;font-size:12px;color:#0c4a6e;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px}
+.readiness-banner{background:#0f172a;color:#f8fafc;border:1px solid #1e293b;border-left:5px solid #ef4444;border-radius:8px;padding:12px 16px;margin-bottom:16px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px}
+.readiness-banner.ready{border-left-color:#10b981}
+.readiness-metrics{display:flex;gap:18px;flex-wrap:wrap;font-size:12px;color:#cbd5e1}
+.readiness-metrics b{color:#fff}
+.badge.new{background:#dbeafe;color:#1d4ed8}
+.badge.active{background:#fef3c7;color:#b45309}
+.badge.regressed{background:#fee2e2;color:#b91c1c}
+.badge.added{background:#dcfce7;color:#15803d}
+.badge.removed{background:#fee2e2;color:#b91c1c}
+.badge.modified{background:#e0f2fe;color:#0369a1}
 .cards{display:grid;grid-template-columns:repeat(5,1fr);gap:14px;margin:0 0 18px}
 .card,.panel{background:var(--panel);border:1px solid #e2e8f0;border-radius:10px;padding:16px;box-shadow:0 1px 2px rgba(15,23,42,.03)}
 .card strong{font-size:25px;display:block;line-height:1.3;margin:2px 0;color:#0f172a}
@@ -100,19 +110,19 @@ dialog::backdrop{background:rgba(15,23,42,.55)}
   <nav>
     <button class="active" data-tab="review">01 &nbsp; Model Explorer &amp; QTO</button>
     <button data-tab="heatmap">02 &nbsp; Heatmap &amp; Value Audit</button>
-    <button data-tab="issues">03 &nbsp; IDS Rules &amp; Team Fixes</button>
-    <button data-tab="errors">04 &nbsp; History &amp; Logs</button>
+    <button data-tab="issues">03 &nbsp; Rules &amp; Team Action Queue</button>
+    <button data-tab="errors">04 &nbsp; Element Diffs &amp; History</button>
   </nav>
   <div class="side-note">
-    <strong>IDS &amp; SQLITE WAREHOUSE</strong><br>
-    buildingSMART IDS rule engine, Category x Parameter heatmap, and Team (AR/ID/MEP/STR) fix packages.
+    <strong>DELIVERY &amp; DIFF WAREHOUSE</strong><br>
+    IDS-inspired rule engine, data confidence metrics, element-level diffs, and Team (AR/ID/MEP/STR) fix packages.
   </div>
 </aside>
 
 <main>
   <header>
     <div>
-      <div class="eyebrow">MODEL DERIVATIVE &amp; IDS DECISION WORKSPACE</div>
+      <div class="eyebrow">MODEL DERIVATIVE &amp; BIM DELIVERY WORKSPACE</div>
       <h1>AEC Parameter Inspection, QA/QC &amp; Decision Support</h1>
       <p id="run" class="muted">Loading batch database...</p>
     </div>
@@ -121,6 +131,22 @@ dialog::backdrop{background:rgba(15,23,42,.55)}
       <button class="button" id="print">Print / Export PDF</button>
     </div>
   </header>
+
+  <div id="readinessBanner" class="readiness-banner">
+    <div>
+      <div style="font-size:14px;font-weight:700" id="readinessTitle">Delivery Readiness: Evaluating...</div>
+      <div class="readiness-metrics" id="readinessMetrics">
+        <span id="confidenceMetric">Data Confidence: -</span>
+        <span id="lifecycleMetric">Issue Lifecycle: -</span>
+        <span id="diffMetric">Element Diffs: -</span>
+      </div>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="chip-btn" id="btnJumpBlocking">View Blocking Issues</button>
+      <button class="chip-btn" id="btnJumpRegressed">Regressed / New</button>
+      <button class="chip-btn" id="btnJumpDiffs">Element Changes (Before -&gt; After)</button>
+    </div>
+  </div>
 
   <div id="coverageBanner" class="coverage-bar">
     <span id="coverageText">View coverage: loading...</span>
@@ -359,7 +385,7 @@ dialog::backdrop{background:rgba(15,23,42,.55)}
         </div>
       </div>
 
-      <div class="filters" style="grid-template-columns:repeat(4,1fr);margin-bottom:14px">
+      <div class="filters" style="grid-template-columns:repeat(6,1fr);margin-bottom:14px">
         <label>Responsible Team Code
           <select id="issueTeam">
             <option value="">All Teams (AR / ID / MEP / STR)</option>
@@ -367,6 +393,22 @@ dialog::backdrop{background:rgba(15,23,42,.55)}
             <option value="ID">ID - Interior Design</option>
             <option value="MEP">MEP - Building Systems</option>
             <option value="STR">STR - Structure</option>
+          </select>
+        </label>
+        <label>Lifecycle State
+          <select id="issueLifecycle">
+            <option value="">All States (New / Active / Regressed)</option>
+            <option value="New">New (First seen)</option>
+            <option value="Regressed">Regressed (Reopened)</option>
+            <option value="Active">Active (Unresolved)</option>
+          </select>
+        </label>
+        <label>Evaluation Status
+          <select id="issueEvalStatus">
+            <option value="">All Statuses</option>
+            <option value="Failed">Failed (Missing / Mismatch)</option>
+            <option value="InvalidValue">Invalid Numeric Value</option>
+            <option value="NotEvaluated">Not Evaluated (Excluded)</option>
           </select>
         </label>
         <label>Severity
@@ -377,8 +419,8 @@ dialog::backdrop{background:rgba(15,23,42,.55)}
             <option value="Low">Low</option>
           </select>
         </label>
-        <label>IDS Rule / Requirement
-          <select id="issueRule"><option value="">All IDS Rules</option></select>
+        <label>Rule / Requirement
+          <select id="issueRule"><option value="">All Rules</option></select>
         </label>
         <label>Model
           <select id="issueModel"><option value="">All Models</option></select>
@@ -389,13 +431,13 @@ dialog::backdrop{background:rgba(15,23,42,.55)}
         <table>
           <thead>
             <tr>
-              <th>Team</th>
-              <th>Severity</th>
-              <th>IDS Rule / EIR Req</th>
+              <th>Team / State</th>
+              <th>Severity / Status</th>
+              <th>Rule / EIR Req</th>
               <th>Model / Element ID</th>
               <th>Category / Family / Type</th>
               <th>Parameter</th>
-              <th>Actual Value</th>
+              <th>Actual vs Expected</th>
               <th>Actionable Instruction</th>
             </tr>
           </thead>
@@ -413,18 +455,41 @@ dialog::backdrop{background:rgba(15,23,42,.55)}
     </div>
   </section>
 
-  <!-- TAB 04: History Warehouse & Extraction Logs -->
+  <!-- TAB 04: Element Diffs, History Warehouse & Extraction Logs -->
   <section id="errors" class="hidden">
     <div class="panel">
       <div class="heading-row">
         <div>
-          <h2>SQLite Warehouse Run History (Trend &amp; Burndown)</h2>
-          <p class="muted">Historical batch extractions stored in output/warehouse.sqlite for week-over-week tracking.</p>
+          <h2>Changes Since Last Review (Element-Level Diff: Added / Removed / Modified Before -&gt; After)</h2>
+          <p class="muted">Tracked by Project ID + Model Lineage + Stable Element UniqueId across batch runs.</p>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <select id="diffChangeType" style="width:200px;margin:0">
+            <option value="">All Change Types</option>
+            <option value="Modified">Modified (Before -&gt; After)</option>
+            <option value="Added">Added Elements</option>
+            <option value="Removed">Removed Elements</option>
+          </select>
+        </div>
+      </div>
+      <div class="table-wrap" style="max-height:320px">
+        <table>
+          <thead><tr><th>Change</th><th>Model</th><th>Element ID / GUID</th><th>Category</th><th>Family / Type</th><th>Parameter</th><th>Before Value</th><th>After Value</th></tr></thead>
+          <tbody id="diffRows"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="heading-row">
+        <div>
+          <h2>SQLite Warehouse Run History (Trend &amp; Issue Lifecycle)</h2>
+          <p class="muted">Historical batch extractions stored in output/warehouse.sqlite with Evaluated Confidence %, New, Fixed, and Regressed counts.</p>
         </div>
       </div>
       <div class="table-wrap" style="max-height:260px">
         <table>
-          <thead><tr><th>Run ID</th><th>Project</th><th>Timestamp (UTC)</th><th>Models</th><th>Total Elements</th><th>Total Parameters</th><th>Open IDS Issues</th></tr></thead>
+          <thead><tr><th>Run ID</th><th>Project</th><th>Timestamp (UTC)</th><th>Models</th><th>Elements</th><th>Confidence</th><th>Open Issues (New / Fixed / Regressed)</th></tr></thead>
           <tbody id="historyRows"></tbody>
         </table>
       </div>
@@ -525,7 +590,7 @@ function switchTab(tabName){
   }
   if(tabName==='heatmap') { loadHeatmap(); loadValueDistribution(); }
   if(tabName==='issues') loadIssues();
-  if(tabName==='errors') loadErrors();
+  if(tabName==='errors') { loadDiffs(); loadErrors(); }
 }
 
 function renderColumnPills(){
@@ -738,6 +803,8 @@ async function loadIssues(){
   try {
     const p = new URLSearchParams({
       discipline: $('issueTeam').value,
+      lifecycle: $('issueLifecycle').value,
+      evalStatus: $('issueEvalStatus').value,
       severity: $('issueSeverity').value,
       rule: $('issueRule').value,
       model: $('issueModel').value,
@@ -753,19 +820,19 @@ async function loadIssues(){
       }
     }
 
-    $('issueSummaryText').textContent = fmt(itotal) + ' IDS rule issue(s) matching filter';
+    $('issueSummaryText').textContent = fmt(itotal) + ' rule issue(s) matching filter';
     $('issueRows').innerHTML = currentIssueRows.map(r =>
       '<tr class="selectable" data-issuemodel="'+r.model_id+'" data-issueelem="'+r.element_id+'" data-issuecat="'+esc(r.category)+'" data-issuefam="'+esc(r.family)+'" data-issuetyp="'+esc(r.type_name)+'" data-issueuid="'+esc(r.unique_id)+'" data-issuepath="'+esc(r.path)+'">' +
-      '<td><span class="badge team">'+esc(r.discipline)+'</span></td>' +
-      '<td>'+badge(r.severity)+'</td>' +
+      '<td><span class="badge team">'+esc(r.discipline)+'</span><br>'+badge(r.lifecycle_state||'New')+'</td>' +
+      '<td>'+badge(r.severity)+'<br><span class="mono muted">'+esc(r.evaluation_status||'Failed')+'</span></td>' +
       '<td><b>'+esc(r.rule_id)+'</b><br><span class="mono muted">'+esc(r.requirement_id)+'</span></td>' +
       '<td>'+esc(base(r.path))+'<br><b class="mono">'+esc(r.element_id)+'</b></td>' +
       '<td>'+esc(r.category)+'<br><span class="muted">'+esc(r.family)+' : '+esc(r.type_name)+'</span></td>' +
       '<td><b>'+esc(r.parameter_name)+'</b></td>' +
-      '<td class="mono">'+esc(r.actual_value)+'</td>' +
+      '<td class="mono"><b>Actual:</b> '+esc(r.actual_value)+'<br><span class="muted"><b>Expected:</b> '+esc(r.expected_rule||'Required')+'</span></td>' +
       '<td style="white-space:normal;max-width:340px">'+esc(r.message)+'</td>' +
       '</tr>'
-    ).join('') || empty(8, 'All elements pass the selected buildingSMART IDS specifications.');
+    ).join('') || empty(8, 'All elements pass the selected rule specifications.');
 
     $('ipage').textContent = 'Page ' + (ipage + 1) + ' of ' + Math.max(1, Math.ceil(itotal / 100));
     $('iprev').disabled = ipage === 0;
@@ -783,6 +850,26 @@ async function loadIssues(){
         kind: 'instance'
       });
     });
+  } catch (e) { fail(e); }
+}
+
+async function loadDiffs(){
+  try {
+    const p = new URLSearchParams({ changeType: $('diffChangeType').value });
+    const d = await api('diffs', p);
+    const list = d.rows || [];
+    $('diffRows').innerHTML = list.map(r =>
+      '<tr>' +
+      '<td>'+badge(r.change_type)+'</td>' +
+      '<td>'+esc(r.model_name)+'</td>' +
+      '<td><b class="mono">'+esc(r.element_id)+'</b><br><span class="mono muted">'+esc(r.unique_id)+'</span></td>' +
+      '<td>'+esc(r.category)+'</td>' +
+      '<td>'+esc(r.family)+' : '+esc(r.type_name)+'</td>' +
+      '<td><b>'+esc(r.parameter_name)+'</b></td>' +
+      '<td class="mono muted">'+esc(r.old_value || '(none)')+'</td>' +
+      '<td class="mono"><b>'+esc(r.new_value || '(removed)')+'</b></td>' +
+      '</tr>'
+    ).join('') || empty(8, 'No element-level differences recorded against a prior model version in warehouse.sqlite.');
   } catch (e) { fail(e); }
 }
 
@@ -891,9 +978,13 @@ $('colSearch').oninput = renderColumnPills;
 $('btnClearCols').onclick = () => { activeColumns = []; renderColumnPills(); load(); };
 $('valAuditSelect').onchange = loadValueDistribution;
 
-for (const id of ['issueTeam','issueSeverity','issueRule','issueModel']) {
+for (const id of ['issueTeam','issueLifecycle','issueEvalStatus','issueSeverity','issueRule','issueModel']) {
   $(id).onchange = () => { ipage = 0; loadIssues(); };
 }
+$('diffChangeType').onchange = loadDiffs;
+$('btnJumpBlocking').onclick = () => { $('issueSeverity').value = 'High'; ipage = 0; switchTab('issues'); };
+$('btnJumpRegressed').onclick = () => { $('issueLifecycle').value = 'Regressed'; ipage = 0; switchTab('issues'); };
+$('btnJumpDiffs').onclick = () => switchTab('errors');
 $('iprev').onclick = () => { ipage--; loadIssues(); };
 $('inext').onclick = () => { ipage++; loadIssues(); };
 
@@ -981,9 +1072,10 @@ $('exportAll').onclick=async()=>{
     const viewList = overview.models.map(m => base(m.path) + ' [' + (m.view_name || '{3D}') + ']').join(', ');
     $('coverageText').textContent = 'Extracted View Scope: ' + (viewList || '3D View');
 
-    // IDS Issue Summary
+    // IDS Issue Summary & Delivery Readiness Banner
     const issSum = overview.issueSummary || [];
     const totalIss = issSum.reduce((acc, x) => acc + Number(x.count || 0), 0);
+    const highIss = issSum.filter(x => x.severity === 'High').reduce((acc, x) => acc + Number(x.count || 0), 0);
     $('issuesTotalCount').textContent = fmt(totalIss);
     const byTeam = {};
     for (const x of issSum) {
@@ -992,10 +1084,32 @@ $('exportAll').onclick=async()=>{
     const teamParts = Object.entries(byTeam).map(([k,v]) => k + ': ' + fmt(v));
     $('issuesTeamSub').textContent = teamParts.length ? teamParts.join(' | ') : '0 issues (All rules passed)';
 
+    const cs = overview.confidenceSummary || {};
+    const totalChecks = Number(cs.total_checks || 0);
+    const evalChecks = Number(cs.evaluated_checks || 0);
+    const notEvalChecks = Number(cs.not_evaluated_checks || 0);
+    const confPct = cs.confidence_pct !== undefined ? cs.confidence_pct : 100;
+    const fixedCnt = Number(cs.fixed_issues || 0);
+    const newCnt = Number(cs.new_issues || 0);
+    const regCnt = Number(cs.regressed_issues || 0);
+
+    const isReady = highIss === 0 && notEvalChecks === 0;
+    $('readinessBanner').classList.toggle('ready', isReady);
+    $('readinessTitle').textContent = isReady
+      ? 'Delivery Readiness: READY FOR SUBMISSION (0 High-Severity Blocking Issues)'
+      : 'Delivery Readiness: NOT READY (' + fmt(highIss) + ' High-Severity Blocking Issues | ' + fmt(totalIss) + ' Total Open)';
+
+    $('confidenceMetric').innerHTML = '<b>Data Confidence:</b> Evaluated ' + fmt(evalChecks) + ' / ' + fmt(totalChecks) + ' checks (' + confPct + '%) | ' + fmt(notEvalChecks) + ' Not Evaluated';
+    $('lifecycleMetric').innerHTML = '<b>Lifecycle Delta:</b> Fixed: ' + fmt(fixedCnt) + ' | New: ' + fmt(newCnt) + ' | Regressed: ' + fmt(regCnt);
+
+    const dSum = overview.diffSummary || [];
+    const getDiffCnt = t => Number(dSum.find(x => x.change_type === t)?.count || 0);
+    $('diffMetric').innerHTML = '<b>Element Changes:</b> +' + fmt(getDiffCnt('Added')) + ' Added / -' + fmt(getDiffCnt('Removed')) + ' Removed / ~' + fmt(getDiffCnt('Modified')) + ' Modified';
+
     // History table
     const hRuns = overview.historyRuns || [];
     $('historyRows').innerHTML = hRuns.map(hr =>
-      '<tr><td class="mono"><b>'+esc(hr.run_id)+'</b></td><td>'+esc(hr.project_name)+'</td><td>'+esc(hr.started_utc)+'</td><td>'+fmt(hr.model_count)+'</td><td>'+fmt(hr.element_count)+'</td><td>'+fmt(hr.parameter_count)+'</td><td><b>'+fmt(hr.issue_count)+'</b></td></tr>'
+      '<tr><td class="mono"><b>'+esc(hr.run_id)+'</b></td><td>'+esc(hr.project_name)+'</td><td>'+esc(hr.started_utc)+'</td><td>'+fmt(hr.model_count)+'</td><td>'+fmt(hr.element_count)+'</td><td><b>'+(hr.confidence_pct!==undefined&&hr.confidence_pct!==null?hr.confidence_pct+'%':'100%')+'</b></td><td><b>'+fmt(hr.issue_count)+'</b> <span class="muted">(New: '+fmt(hr.new_issue_count||0)+' / Fixed: '+fmt(hr.fixed_issue_count||0)+' / Regressed: '+fmt(hr.regressed_issue_count||0)+')</span></td></tr>'
     ).join('') || empty(7, 'No prior runs recorded in warehouse.sqlite yet.');
 
     allAvailableParams = overview.availableParameters || [];

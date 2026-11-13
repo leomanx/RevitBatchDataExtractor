@@ -25,7 +25,20 @@ public sealed class ScheduledProfile
     public List<string> Categories { get; set; } = [];
     public bool ExtractAllParameters { get; set; } = true;
     public List<string> PriorityColumns { get; set; } = [];
+    public bool SkipUnchangedVersions { get; set; }
 }
+
+public sealed record ElementDiffRecord(
+    int ModelId,
+    string ChangeType, // "Added", "Removed", "Modified"
+    long ElementId,
+    string UniqueId,
+    string Category,
+    string Family,
+    string TypeName,
+    string ParameterName,
+    string OldValue,
+    string NewValue);
 
 public partial class MainWindow : Window
 {
@@ -313,6 +326,7 @@ public partial class MainWindow : Window
             profile.ExtractAllParameters,
             targetParams,
             profile.PriorityColumns,
+            skipUnchanged: profile.SkipUnchangedVersions,
             isHeadless: true);
     }
 
@@ -351,7 +365,7 @@ public partial class MainWindow : Window
 
         ProgBatch.Maximum = 4;
         ProgBatch.Value = 4;
-        TxtProgressStatus.Text = "Extraction & IDS Rule Check completed for 4 model(s) in 34.2s. History saved to warehouse.sqlite.";
+        TxtProgressStatus.Text = "Extraction, Element Diff & Rule Lifecycle completed for 4 model(s) in 34.2s.";
 
         TxtLog.Text = string.Join(Environment.NewLine,
             "[10:15:02] Authenticating with Autodesk Platform Services (DPAPI Encrypted Secret)...",
@@ -361,7 +375,7 @@ public partial class MainWindow : Window
             ">>> [2/4] STR_Superstructure_R26.rvt (v8) -> View '{3D}' -> 8,912 elements, 41,205 parameters (7.1s)",
             ">>> [3/4] MEP_HVAC_Piping_R26.rvt (v15) -> View '{3D}' -> 14,310 elements, 68,110 parameters (10.4s)",
             ">>> [4/4] INT_Podium_Fitout_R26.rvt (v6) -> View '{3D}' -> 6,180 elements, 29,400 parameters (6.2s)",
-            "[IDS QA/QC] Evaluated 7 buildingSMART IDS Specifications (Teams: AR, ID, MEP, STR).",
+            "[QA/QC] Evaluated 7 IDS-inspired specifications + Element Diff + Issue Lifecycle.",
             "[SUCCESS] Persisted extract.sqlite, warehouse.sqlite, elements_wide.csv, and fix_candidates.json.");
 
         await Task.Delay(350);
@@ -428,10 +442,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private void BtnOpenSettings_Click(object sender, RoutedEventArgs e)
-    {
-        OpenSettingsModal();
-    }
+    private void BtnOpenSettings_Click(object sender, RoutedEventArgs e) => OpenSettingsModal();
 
     private void OpenSettingsModal(string? statusMessage = null)
     {
@@ -638,7 +649,8 @@ public partial class MainWindow : Window
             ExtractAllCategories = ChkExtractAllCategories.IsChecked == true,
             Categories = categoryOptions.Where(c => c.IsSelected).Select(c => c.Name).ToList(),
             ExtractAllParameters = ChkExtractAllParams.IsChecked == true,
-            PriorityColumns = ParsePriorityColumns()
+            PriorityColumns = ParsePriorityColumns(),
+            SkipUnchangedVersions = ChkSkipUnchanged.IsChecked == true
         };
 
         File.WriteAllText(profilePath, JsonSerializer.Serialize(profile, new JsonSerializerOptions { WriteIndented = true }), Encoding.UTF8);
@@ -716,6 +728,7 @@ public partial class MainWindow : Window
         var priorityColumns = ParsePriorityColumns();
         var extractAllParams = ChkExtractAllParams.IsChecked == true;
         var targetParams = BuildTargetParameterSet(priorityColumns);
+        var skipUnchanged = ChkSkipUnchanged.IsChecked == true;
 
         await ExecuteBatchExtractionAsync(
             proj.Id,
@@ -726,7 +739,33 @@ public partial class MainWindow : Window
             extractAllParams,
             targetParams,
             priorityColumns,
+            skipUnchanged,
             isHeadless: false);
+    }
+
+    private bool IsModelVersionAlreadyInWarehouse(string projectId, ModelFileItem model)
+    {
+        var warehousePath = Path.Combine(outputRoot, "warehouse.sqlite");
+        if (!File.Exists(warehousePath)) return false;
+
+        try
+        {
+            using var conn = new SqliteConnection("Data Source=" + warehousePath);
+            conn.Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = @"
+                SELECT 1 FROM model_versions
+                WHERE project_id = $pid AND lineage_id = $lid AND version_id = $vid
+                LIMIT 1";
+            cmd.Parameters.AddWithValue("$pid", projectId);
+            cmd.Parameters.AddWithValue("$lid", model.Id);
+            cmd.Parameters.AddWithValue("$vid", model.VersionId);
+            return cmd.ExecuteScalar() != null;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private async Task ExecuteBatchExtractionAsync(
@@ -738,6 +777,7 @@ public partial class MainWindow : Window
         bool extractAllParams,
         HashSet<string> targetParams,
         List<string> priorityColumns,
+        bool skipUnchanged,
         bool isHeadless)
     {
         if (!isHeadless)
@@ -753,7 +793,6 @@ public partial class MainWindow : Window
         Log($"Project           : {projectName}");
         Log($"Category Scope    : {(extractAllCategories ? "ALL Model Categories" : $"{categories.Count} Selected Categories")}");
         Log($"Parameter Scope   : {(extractAllParams ? "ALL Model Parameters (Full Dump)" : $"{targetParams.Count} Targeted Parameters")}");
-        Log($"Priority Columns  : {string.Join(", ", priorityColumns)}");
         Log("============================================================");
 
         var timestamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
@@ -764,7 +803,14 @@ public partial class MainWindow : Window
         var allElements = new List<(int modelId, ExtractedElement elem)>();
         var allParameters = new List<(int modelId, ExtractedParam param)>();
         var modelRows = new List<(int modelId, ModelFileItem item, string status, int count)>();
-        var allIssues = new List<IdsIssueRecord>();
+        var errorLogs = new List<(int modelId, string stage, string type, string message)>();
+        RuleEvaluationSummary? evalSummary = null;
+        int fixedIssuesCount = 0;
+        int newIssuesCount = 0;
+        int regressedIssuesCount = 0;
+        int addedElemsCount = 0;
+        int removedElemsCount = 0;
+        int modifiedElemsCount = 0;
 
         await Task.Run(async () =>
         {
@@ -772,6 +818,23 @@ public partial class MainWindow : Window
             {
                 var model = selectedModels[i];
                 var modelId = i + 1;
+
+                if (skipUnchanged && IsModelVersionAlreadyInWarehouse(projectId, model))
+                {
+                    Log($"\n>>> [{modelId}/{selectedModels.Count}] {model.Name} -> Skipped (Version already extracted in warehouse)");
+                    modelRows.Add((modelId, model, "skipped_unchanged", 0));
+                    if (!isHeadless)
+                    {
+                        Dispatcher.Invoke(() =>
+                        {
+                            ProgBatch.Value = i + 1;
+                            model.Status = "Skipped (Unchanged)";
+                            LstModels.Items.Refresh();
+                        });
+                    }
+                    continue;
+                }
+
                 if (!isHeadless)
                 {
                     Dispatcher.Invoke(() =>
@@ -810,8 +873,9 @@ public partial class MainWindow : Window
                 }
                 catch (Exception ex)
                 {
-                    Log($"[ERROR] {model.Name} failed: {ex.Message}");
+                    Log($"[ERROR] {model.Name} failed (continuing remaining batch): {ex.Message}");
                     modelRows.Add((modelId, model, "failed", 0));
+                    errorLogs.Add((modelId, "ModelDerivativeExtract", ex.GetType().Name, ex.Message));
                     if (!isHeadless)
                     {
                         Dispatcher.Invoke(() =>
@@ -823,29 +887,49 @@ public partial class MainWindow : Window
                 }
             }
 
-            // Evaluate buildingSMART IDS Rules
+            // Evaluate IDS-inspired Rules with Data Confidence
             var specs = AecRuleEngine.LoadSpecifications(rulesPath);
-            allIssues = AecRuleEngine.Evaluate(specs, allElements, allParameters);
-            Log($"\n[IDS QA/QC] Evaluated {specs.Count} buildingSMART IDS specifications -> {allIssues.Count:N0} issue(s) flagged across AR/ID/MEP/STR.");
+            evalSummary = AecRuleEngine.Evaluate(
+                specs,
+                allElements,
+                allParameters,
+                extractAllCategories,
+                categories,
+                extractAllParams,
+                targetParams);
 
-            Log("Persisting run database (extract.sqlite), SQLite History Warehouse (warehouse.sqlite), and CSV exports...");
-            SaveToDatabaseAndCsv(runDir, outputRoot, timestamp, projectName, modelRows, allElements, allParameters, allIssues, priorityColumns);
+            Log($"\n[DATA CONFIDENCE] Applicable Checks: {evalSummary.ApplicableChecks:N0} | Evaluated: {evalSummary.EvaluatedChecks:N0} | Not Evaluated: {evalSummary.NotEvaluatedChecks:N0}");
+            Log($"[RULE ENGINE]     Passed: {evalSummary.PassedChecks:N0} | Failed: {evalSummary.FailedChecks:N0} | Invalid Numeric: {evalSummary.InvalidValueChecks:N0}");
+
+            Log("Computing Element-Level Diffs (Added / Removed / Modified) & Issue Lifecycle (New / Active / Fixed / Regressed)...");
+            (fixedIssuesCount, newIssuesCount, regressedIssuesCount, addedElemsCount, removedElemsCount, modifiedElemsCount) =
+                SaveToDatabaseAndCsv(
+                    runDir,
+                    outputRoot,
+                    timestamp,
+                    projectId,
+                    projectName,
+                    modelRows,
+                    allElements,
+                    allParameters,
+                    evalSummary,
+                    errorLogs,
+                    priorityColumns);
         });
 
         sw.Stop();
         if (!isHeadless)
         {
             ProgBatch.Value = selectedModels.Count;
-            TxtProgressStatus.Text = $"Extraction & IDS QA completed for {selectedModels.Count} model(s) in {sw.Elapsed.TotalSeconds:F1}s!";
+            TxtProgressStatus.Text = $"Completed in {sw.Elapsed.TotalSeconds:F1}s | Fixed: {fixedIssuesCount}, New: {newIssuesCount}, Regressed: {regressedIssuesCount}";
             BtnStartExtract.IsEnabled = true;
             BtnDashboard.IsEnabled = true;
         }
 
         Log("\n============================================================");
-        Log($"[SUCCESS] Extraction & IDS QA completed for {selectedModels.Count} model(s)!");
-        Log($"Total Elements   : {allElements.Count:N0}");
-        Log($"Total Parameters : {allParameters.Count:N0}");
-        Log($"IDS QA Issues    : {allIssues.Count:N0}");
+        Log($"[SUCCESS] Batch Extraction & Lifecycle Audit Completed!");
+        Log($"Total Elements   : {allElements.Count:N0} (+{addedElemsCount} Added, -{removedElemsCount} Removed, ~{modifiedElemsCount} Modified)");
+        Log($"Issue Lifecycle  : Fixed: {fixedIssuesCount} | New: {newIssuesCount} | Regressed: {regressedIssuesCount}");
         Log($"Elapsed Time     : {sw.Elapsed.TotalSeconds:F1} seconds");
         Log($"Output Directory : {runDir}");
         Log("============================================================");
@@ -853,11 +937,11 @@ public partial class MainWindow : Window
         if (!isHeadless)
         {
             var res = MessageBox.Show(this,
-                $"Batch extraction & IDS QA completed for {selectedModels.Count} model(s)!\n" +
-                $"• Elements: {allElements.Count:N0} | Parameters: {allParameters.Count:N0}\n" +
-                $"• IDS QA Issues Flagged: {allIssues.Count:N0} (by Team AR / ID / MEP / STR)\n" +
-                $"• History Warehouse Updated: output\\warehouse.sqlite\n\n" +
-                "Would you like to open the Interactive Review Dashboard now?",
+                $"Batch extraction & Decision Audit completed in {sw.Elapsed.TotalSeconds:F1}s!\n\n" +
+                $"• Elements Extracted: {allElements.Count:N0}\n" +
+                $"• Element Diff vs Last Run: +{addedElemsCount} Added, -{removedElemsCount} Removed, ~{modifiedElemsCount} Modified\n" +
+                $"• Issue Lifecycle: {fixedIssuesCount} Fixed, {newIssuesCount} New, {regressedIssuesCount} Regressed\n\n" +
+                "Would you like to open the Decision & Review Dashboard now?",
                 "Extraction Complete", MessageBoxButton.YesNo, MessageBoxImage.Information);
 
             if (res == MessageBoxResult.Yes)
@@ -876,22 +960,52 @@ public partial class MainWindow : Window
         return "\"" + s.Replace("\"", "\"\"") + "\"";
     }
 
-    private static void SaveToDatabaseAndCsv(
+    private static (int fixedIssues, int newIssues, int regressedIssues, int addedElems, int removedElems, int modifiedElems) SaveToDatabaseAndCsv(
         string runDir,
         string outputRoot,
         string runId,
+        string projectId,
         string projectName,
         List<(int modelId, ModelFileItem item, string status, int count)> models,
         List<(int modelId, ExtractedElement elem)> elements,
         List<(int modelId, ExtractedParam param)> parameters,
-        List<IdsIssueRecord> issues,
+        RuleEvaluationSummary evalSummary,
+        List<(int modelId, string stage, string type, string message)> errorLogs,
         List<string> priorityColumns)
     {
-        // 1. Update Persistent SQLite History Warehouse (output/warehouse.sqlite) and compute version deltas
         Directory.CreateDirectory(outputRoot);
         var warehousePath = Path.Combine(outputRoot, "warehouse.sqlite");
-        var modelDeltas = new Dictionary<int, (int prevVersion, int prevElements, int deltaElements, int prevIssues)>();
+        var modelDeltas = new Dictionary<int, (int prevVersion, int prevElements, int deltaElements, int added, int removed, int modified)>();
+        var elementDiffs = new List<ElementDiffRecord>();
+        var lifecycleIssues = new List<IdsIssueRecord>();
 
+        int totalFixedIssues = 0;
+        int totalNewIssues = 0;
+        int totalRegressedIssues = 0;
+        int totalActiveIssues = 0;
+
+        // Build per-element priority parameter map for current run
+        var elemParamMap = new Dictionary<(int mId, long elId), Dictionary<string, string>>();
+        var paramFrequency = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var (mId, pr) in parameters)
+        {
+            var key = (mId, pr.ElementId);
+            if (!elemParamMap.TryGetValue(key, out var pDict))
+            {
+                pDict = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                elemParamMap[key] = pDict;
+            }
+            if (!pDict.ContainsKey(pr.Name))
+            {
+                pDict[pr.Name] = pr.DisplayValue;
+                paramFrequency[pr.Name] = paramFrequency.GetValueOrDefault(pr.Name) + 1;
+            }
+        }
+
+        var diffTrackCols = priorityColumns.Take(12).ToList();
+
+        // 1. Update Persistent SQLite History Warehouse (output/warehouse.sqlite): Element Diff + Issue Lifecycle
         using (var wConn = new SqliteConnection("Data Source=" + warehousePath))
         {
             wConn.Open();
@@ -901,15 +1015,20 @@ public partial class MainWindow : Window
                     PRAGMA journal_mode=WAL;
                     CREATE TABLE IF NOT EXISTS runs (
                         run_id TEXT PRIMARY KEY,
+                        project_id TEXT,
                         project_name TEXT,
                         started_utc TEXT,
                         model_count INTEGER,
                         element_count INTEGER,
                         parameter_count INTEGER,
-                        issue_count INTEGER
+                        issue_count INTEGER,
+                        fixed_count INTEGER DEFAULT 0,
+                        new_issue_count INTEGER DEFAULT 0,
+                        regressed_count INTEGER DEFAULT 0
                     );
                     CREATE TABLE IF NOT EXISTS model_versions (
                         run_id TEXT,
+                        project_id TEXT,
                         lineage_id TEXT,
                         model_name TEXT,
                         version_number INTEGER,
@@ -918,55 +1037,302 @@ public partial class MainWindow : Window
                         element_count INTEGER,
                         issue_count INTEGER,
                         recorded_utc TEXT,
-                        PRIMARY KEY (run_id, lineage_id)
+                        PRIMARY KEY (run_id, project_id, lineage_id)
+                    );
+                    CREATE TABLE IF NOT EXISTS element_snapshots (
+                        project_id TEXT,
+                        lineage_id TEXT,
+                        unique_id TEXT,
+                        element_id INTEGER,
+                        category TEXT,
+                        family TEXT,
+                        type_name TEXT,
+                        params_json TEXT,
+                        run_id TEXT,
+                        PRIMARY KEY (project_id, lineage_id, unique_id)
+                    );
+                    CREATE TABLE IF NOT EXISTS issue_registry (
+                        project_id TEXT,
+                        lineage_id TEXT,
+                        unique_id TEXT,
+                        rule_id TEXT,
+                        parameter_name TEXT,
+                        discipline TEXT,
+                        severity TEXT,
+                        status TEXT,
+                        first_seen_run TEXT,
+                        last_seen_run TEXT,
+                        closed_run TEXT,
+                        reopened_count INTEGER DEFAULT 0,
+                        PRIMARY KEY (project_id, lineage_id, unique_id, rule_id, parameter_name)
                     );
                 ";
                 wInit.ExecuteNonQuery();
             }
 
-            foreach (var m in models)
+            // Ensure new columns exist on older warehouse tables if migrating
+            foreach (var alterSql in new[]
             {
-                using var qPrev = wConn.CreateCommand();
-                qPrev.CommandText = @"
-                    SELECT version_number, element_count, issue_count
-                    FROM model_versions
-                    WHERE lineage_id = $lid OR model_name = $mname
-                    ORDER BY recorded_utc DESC LIMIT 1";
-                qPrev.Parameters.AddWithValue("$lid", m.item.Id);
-                qPrev.Parameters.AddWithValue("$mname", m.item.Name);
-                using var r = qPrev.ExecuteReader();
-                if (r.Read())
-                {
-                    int pv = r.GetInt32(0);
-                    int pe = r.GetInt32(1);
-                    int pi = r.GetInt32(2);
-                    modelDeltas[m.modelId] = (pv, pe, m.count - pe, pi);
-                }
-                else
-                {
-                    modelDeltas[m.modelId] = (m.item.VersionNumber, m.count, 0, 0);
-                }
+                "ALTER TABLE runs ADD COLUMN project_id TEXT DEFAULT ''",
+                "ALTER TABLE runs ADD COLUMN fixed_count INTEGER DEFAULT 0",
+                "ALTER TABLE runs ADD COLUMN new_issue_count INTEGER DEFAULT 0",
+                "ALTER TABLE runs ADD COLUMN regressed_count INTEGER DEFAULT 0",
+                "ALTER TABLE model_versions ADD COLUMN project_id TEXT DEFAULT ''"
+            })
+            {
+                try { using var ac = wConn.CreateCommand(); ac.CommandText = alterSql; ac.ExecuteNonQuery(); } catch { }
             }
 
             using var wTrans = wConn.BeginTransaction();
+
+            foreach (var m in models)
+            {
+                if (m.status != "succeeded")
+                {
+                    modelDeltas[m.modelId] = (m.item.VersionNumber, m.count, 0, 0, 0, 0);
+                    continue;
+                }
+
+                // Strictly match by (project_id, lineage_id), never by file name alone!
+                int prevVer = m.item.VersionNumber;
+                int prevCount = m.count;
+                bool hasPriorModelRun = false;
+
+                using (var qPrev = wConn.CreateCommand())
+                {
+                    qPrev.CommandText = @"
+                        SELECT version_number, element_count
+                        FROM model_versions
+                        WHERE project_id = $pid AND lineage_id = $lid
+                        ORDER BY recorded_utc DESC LIMIT 1";
+                    qPrev.Parameters.AddWithValue("$pid", projectId);
+                    qPrev.Parameters.AddWithValue("$lid", m.item.Id);
+                    using var r = qPrev.ExecuteReader();
+                    if (r.Read())
+                    {
+                        hasPriorModelRun = true;
+                        prevVer = r.GetInt32(0);
+                        prevCount = r.GetInt32(1);
+                    }
+                }
+
+                // Load previous element snapshots for (project_id, lineage_id)
+                var prevSnapshots = new Dictionary<string, (long elId, string cat, string fam, string typ, string json)>(StringComparer.Ordinal);
+                using (var qSnap = wConn.CreateCommand())
+                {
+                    qSnap.CommandText = "SELECT unique_id, element_id, category, family, type_name, params_json FROM element_snapshots WHERE project_id=$pid AND lineage_id=$lid";
+                    qSnap.Parameters.AddWithValue("$pid", projectId);
+                    qSnap.Parameters.AddWithValue("$lid", m.item.Id);
+                    using var sr = qSnap.ExecuteReader();
+                    while (sr.Read())
+                    {
+                        var uid = sr.GetString(0);
+                        prevSnapshots[uid] = (sr.GetInt64(1), sr.GetString(2), sr.GetString(3), sr.GetString(4), sr.GetString(5));
+                    }
+                }
+
+                int mAdded = 0, mRemoved = 0, mModified = 0;
+                var currentUids = new HashSet<string>(StringComparer.Ordinal);
+                var modelInstances = elements.Where(x => x.modelId == m.modelId && x.elem.Kind == "instance" && !string.IsNullOrEmpty(x.elem.UniqueId)).ToList();
+
+                foreach (var (_, el) in modelInstances)
+                {
+                    currentUids.Add(el.UniqueId);
+                    elemParamMap.TryGetValue((m.modelId, el.ElementId), out var pDict);
+                    var subset = new SortedDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                    if (pDict != null)
+                    {
+                        foreach (var col in diffTrackCols)
+                        {
+                            if (pDict.TryGetValue(col, out var val) && !string.IsNullOrEmpty(val))
+                                subset[col] = val;
+                        }
+                    }
+                    var currentJson = JsonSerializer.Serialize(subset);
+
+                    if (hasPriorModelRun && prevSnapshots.Count > 0)
+                    {
+                        if (!prevSnapshots.TryGetValue(el.UniqueId, out var prevSnap))
+                        {
+                            mAdded++;
+                            elementDiffs.Add(new ElementDiffRecord(
+                                m.modelId, "Added", el.ElementId, el.UniqueId, el.Category, el.Family, el.TypeName,
+                                "(Element Added)", "-", $"{el.Family} : {el.TypeName}"));
+                        }
+                        else if (prevSnap.typ != el.TypeName || prevSnap.json != currentJson)
+                        {
+                            mModified++;
+                            if (prevSnap.typ != el.TypeName)
+                            {
+                                elementDiffs.Add(new ElementDiffRecord(
+                                    m.modelId, "Modified", el.ElementId, el.UniqueId, el.Category, el.Family, el.TypeName,
+                                    "Type Name", prevSnap.typ, el.TypeName));
+                            }
+
+                            var oldDict = JsonSerializer.Deserialize<Dictionary<string, string>>(prevSnap.json) ?? [];
+                            foreach (var col in diffTrackCols)
+                            {
+                                var oldV = oldDict.GetValueOrDefault(col, "");
+                                var newV = subset.GetValueOrDefault(col, "");
+                                if (!string.Equals(oldV, newV, StringComparison.Ordinal))
+                                {
+                                    elementDiffs.Add(new ElementDiffRecord(
+                                        m.modelId, "Modified", el.ElementId, el.UniqueId, el.Category, el.Family, el.TypeName,
+                                        col, string.IsNullOrEmpty(oldV) ? "(empty)" : oldV, string.IsNullOrEmpty(newV) ? "(empty)" : newV));
+                                }
+                            }
+                        }
+                    }
+
+                    // Upsert snapshot
+                    using var upSnap = wConn.CreateCommand();
+                    upSnap.CommandText = "INSERT OR REPLACE INTO element_snapshots VALUES ($pid, $lid, $uid, $elid, $cat, $fam, $typ, $json, $rid)";
+                    upSnap.Parameters.AddWithValue("$pid", projectId);
+                    upSnap.Parameters.AddWithValue("$lid", m.item.Id);
+                    upSnap.Parameters.AddWithValue("$uid", el.UniqueId);
+                    upSnap.Parameters.AddWithValue("$elid", el.ElementId);
+                    upSnap.Parameters.AddWithValue("$cat", el.Category);
+                    upSnap.Parameters.AddWithValue("$fam", el.Family);
+                    upSnap.Parameters.AddWithValue("$typ", el.TypeName);
+                    upSnap.Parameters.AddWithValue("$json", currentJson);
+                    upSnap.Parameters.AddWithValue("$rid", runId);
+                    upSnap.ExecuteNonQuery();
+                }
+
+                if (hasPriorModelRun && prevSnapshots.Count > 0)
+                {
+                    foreach (var (oldUid, oldSnap) in prevSnapshots)
+                    {
+                        if (!currentUids.Contains(oldUid))
+                        {
+                            mRemoved++;
+                            elementDiffs.Add(new ElementDiffRecord(
+                                m.modelId, "Removed", oldSnap.elId, oldUid, oldSnap.cat, oldSnap.fam, oldSnap.typ,
+                                "(Element Removed)", $"{oldSnap.fam} : {oldSnap.typ}", "-"));
+
+                            using var delSnap = wConn.CreateCommand();
+                            delSnap.CommandText = "DELETE FROM element_snapshots WHERE project_id=$pid AND lineage_id=$lid AND unique_id=$uid";
+                            delSnap.Parameters.AddWithValue("$pid", projectId);
+                            delSnap.Parameters.AddWithValue("$lid", m.item.Id);
+                            delSnap.Parameters.AddWithValue("$uid", oldUid);
+                            delSnap.ExecuteNonQuery();
+                        }
+                    }
+                }
+
+                modelDeltas[m.modelId] = (prevVer, prevCount, m.count - prevCount, mAdded, mRemoved, mModified);
+
+                // Issue Lifecycle Reconciliation for (project_id, lineage_id)
+                var priorIssues = new Dictionary<(string uid, string ruleId, string param), (string status, string firstRun, int reopened)>();
+                using (var qIss = wConn.CreateCommand())
+                {
+                    qIss.CommandText = "SELECT unique_id, rule_id, parameter_name, status, first_seen_run, reopened_count FROM issue_registry WHERE project_id=$pid AND lineage_id=$lid";
+                    qIss.Parameters.AddWithValue("$pid", projectId);
+                    qIss.Parameters.AddWithValue("$lid", m.item.Id);
+                    using var ir = qIss.ExecuteReader();
+                    while (ir.Read())
+                    {
+                        priorIssues[(ir.GetString(0), ir.GetString(1), ir.GetString(2))] =
+                            (ir.GetString(3), ir.GetString(4), ir.GetInt32(5));
+                    }
+                }
+
+                var seenIssueKeys = new HashSet<(string uid, string ruleId, string param)>();
+                foreach (var iss in evalSummary.Issues.Where(x => x.ModelId == m.modelId))
+                {
+                    var uidKey = string.IsNullOrEmpty(iss.UniqueId) ? iss.ElementId.ToString() : iss.UniqueId;
+                    var iKey = (uidKey, iss.RuleId, iss.ParameterName);
+                    seenIssueKeys.Add(iKey);
+
+                    string state = "New";
+                    string firstRun = runId;
+                    int reopened = 0;
+
+                    if (priorIssues.TryGetValue(iKey, out var prevIss))
+                    {
+                        firstRun = prevIss.firstRun;
+                        reopened = prevIss.reopened;
+                        if (prevIss.status == "Closed")
+                        {
+                            state = "Regressed";
+                            reopened++;
+                            totalRegressedIssues++;
+                        }
+                        else
+                        {
+                            state = "Active";
+                            totalActiveIssues++;
+                        }
+                    }
+                    else
+                    {
+                        totalNewIssues++;
+                    }
+
+                    lifecycleIssues.Add(iss with { LifecycleState = state });
+
+                    using var upIss = wConn.CreateCommand();
+                    upIss.CommandText = @"
+                        INSERT OR REPLACE INTO issue_registry
+                        VALUES ($pid, $lid, $uid, $rid, $pname, $disc, $sev, 'Open', $first, $last, '', $reopen)";
+                    upIss.Parameters.AddWithValue("$pid", projectId);
+                    upIss.Parameters.AddWithValue("$lid", m.item.Id);
+                    upIss.Parameters.AddWithValue("$uid", uidKey);
+                    upIss.Parameters.AddWithValue("$rid", iss.RuleId);
+                    upIss.Parameters.AddWithValue("$pname", iss.ParameterName);
+                    upIss.Parameters.AddWithValue("$disc", iss.Discipline);
+                    upIss.Parameters.AddWithValue("$sev", iss.Severity);
+                    upIss.Parameters.AddWithValue("$first", firstRun);
+                    upIss.Parameters.AddWithValue("$last", runId);
+                    upIss.Parameters.AddWithValue("$reopen", reopened);
+                    upIss.ExecuteNonQuery();
+                }
+
+                // Mark previously Open issues that are no longer failing in this model run as Closed (Fixed!)
+                foreach (var (iKey, prevIss) in priorIssues)
+                {
+                    if (prevIss.status == "Open" && !seenIssueKeys.Contains(iKey))
+                    {
+                        totalFixedIssues++;
+                        using var closeIss = wConn.CreateCommand();
+                        closeIss.CommandText = @"
+                            UPDATE issue_registry
+                            SET status = 'Closed', closed_run = $crun
+                            WHERE project_id=$pid AND lineage_id=$lid AND unique_id=$uid AND rule_id=$rid AND parameter_name=$pname";
+                        closeIss.Parameters.AddWithValue("$crun", runId);
+                        closeIss.Parameters.AddWithValue("$pid", projectId);
+                        closeIss.Parameters.AddWithValue("$lid", m.item.Id);
+                        closeIss.Parameters.AddWithValue("$uid", iKey.uid);
+                        closeIss.Parameters.AddWithValue("$rid", iKey.ruleId);
+                        closeIss.Parameters.AddWithValue("$pname", iKey.param);
+                        closeIss.ExecuteNonQuery();
+                    }
+                }
+            }
+
             using (var rCmd = wConn.CreateCommand())
             {
-                rCmd.CommandText = "INSERT OR REPLACE INTO runs VALUES ($rid, $proj, datetime('now'), $mc, $ec, $pc, $ic)";
+                rCmd.CommandText = "INSERT OR REPLACE INTO runs (run_id, project_id, project_name, started_utc, model_count, element_count, parameter_count, issue_count, fixed_count, new_issue_count, regressed_count) VALUES ($rid, $pid, $proj, datetime('now'), $mc, $ec, $pc, $ic, $fc, $nc, $rc)";
                 rCmd.Parameters.AddWithValue("$rid", runId);
+                rCmd.Parameters.AddWithValue("$pid", projectId);
                 rCmd.Parameters.AddWithValue("$proj", projectName);
                 rCmd.Parameters.AddWithValue("$mc", models.Count);
                 rCmd.Parameters.AddWithValue("$ec", elements.Count);
                 rCmd.Parameters.AddWithValue("$pc", parameters.Count);
-                rCmd.Parameters.AddWithValue("$ic", issues.Count);
+                rCmd.Parameters.AddWithValue("$ic", lifecycleIssues.Count);
+                rCmd.Parameters.AddWithValue("$fc", totalFixedIssues);
+                rCmd.Parameters.AddWithValue("$nc", totalNewIssues);
+                rCmd.Parameters.AddWithValue("$rc", totalRegressedIssues);
                 rCmd.ExecuteNonQuery();
             }
 
             foreach (var m in models)
             {
-                var mIssues = issues.Count(x => x.ModelId == m.modelId);
+                var mIssues = lifecycleIssues.Count(x => x.ModelId == m.modelId);
                 using var mvCmd = wConn.CreateCommand();
-                mvCmd.CommandText = "INSERT OR REPLACE INTO model_versions VALUES ($rid, $lid, $name, $vnum, $vid, $vname, $ec, $ic, datetime('now'))";
+                mvCmd.CommandText = "INSERT OR REPLACE INTO model_versions (run_id, project_id, lineage_id, model_name, version_number, version_id, view_name, element_count, issue_count, recorded_utc) VALUES ($rid, $pid, $lid, $name, $vnum, $vid, $vname, $ec, $ic, datetime('now'))";
                 mvCmd.Parameters.AddWithValue("$rid", runId);
+                mvCmd.Parameters.AddWithValue("$pid", projectId);
                 mvCmd.Parameters.AddWithValue("$lid", m.item.Id);
                 mvCmd.Parameters.AddWithValue("$name", m.item.Name);
                 mvCmd.Parameters.AddWithValue("$vnum", m.item.VersionNumber);
@@ -976,10 +1342,15 @@ public partial class MainWindow : Window
                 mvCmd.Parameters.AddWithValue("$ic", mIssues);
                 mvCmd.ExecuteNonQuery();
             }
+
             wTrans.Commit();
         }
 
-        // 2. Write Run-Specific SQLite Database (extract.sqlite) with full schema + IDS Issues + History snapshot
+        int totalAddedElems = modelDeltas.Values.Sum(x => x.added);
+        int totalRemovedElems = modelDeltas.Values.Sum(x => x.removed);
+        int totalModifiedElems = modelDeltas.Values.Sum(x => x.modified);
+
+        // 2. Write Run-Specific SQLite Database (extract.sqlite) with Data Confidence, Element Diffs, & Issue Lifecycle
         var dbPath = Path.Combine(runDir, "extract.sqlite");
         using var conn = new SqliteConnection("Data Source=" + dbPath);
         conn.Open();
@@ -1000,6 +1371,9 @@ public partial class MainWindow : Window
                     version_number INTEGER DEFAULT 1,
                     view_name TEXT DEFAULT '{3D}',
                     delta_elements INTEGER DEFAULT 0,
+                    added_elements INTEGER DEFAULT 0,
+                    removed_elements INTEGER DEFAULT 0,
+                    modified_elements INTEGER DEFAULT 0,
                     derivative_urn TEXT DEFAULT ''
                 );
                 CREATE TABLE elements (
@@ -1042,7 +1416,38 @@ public partial class MainWindow : Window
                     severity TEXT,
                     parameter_name TEXT,
                     actual_value TEXT,
+                    expected_rule TEXT,
+                    evaluation_status TEXT,
+                    lifecycle_state TEXT,
                     message TEXT
+                );
+                CREATE TABLE element_diffs (
+                    diff_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    model_id INTEGER NOT NULL,
+                    change_type TEXT NOT NULL,
+                    element_id INTEGER NOT NULL,
+                    unique_id TEXT,
+                    category TEXT,
+                    family TEXT,
+                    type_name TEXT,
+                    parameter_name TEXT,
+                    old_value TEXT,
+                    new_value TEXT
+                );
+                CREATE TABLE confidence_summary (
+                    applicable_checks INTEGER,
+                    evaluated_checks INTEGER,
+                    passed_checks INTEGER,
+                    failed_checks INTEGER,
+                    invalid_value_checks INTEGER,
+                    not_evaluated_checks INTEGER,
+                    fixed_issues INTEGER,
+                    new_issues INTEGER,
+                    active_issues INTEGER,
+                    regressed_issues INTEGER,
+                    added_elements INTEGER,
+                    removed_elements INTEGER,
+                    modified_elements INTEGER
                 );
                 CREATE TABLE priority_columns (col_order INTEGER PRIMARY KEY, name TEXT NOT NULL);
                 CREATE TABLE errors (utc TEXT, model_id INTEGER, element_id INTEGER, stage TEXT, exception_type TEXT, message TEXT);
@@ -1052,6 +1457,25 @@ public partial class MainWindow : Window
 
         using (var trans = conn.BeginTransaction())
         {
+            using (var csCmd = conn.CreateCommand())
+            {
+                csCmd.CommandText = "INSERT INTO confidence_summary VALUES ($app, $eval, $pass, $fail, $inv, $neval, $fix, $new, $act, $reg, $add, $rem, $mod)";
+                csCmd.Parameters.AddWithValue("$app", evalSummary.ApplicableChecks);
+                csCmd.Parameters.AddWithValue("$eval", evalSummary.EvaluatedChecks);
+                csCmd.Parameters.AddWithValue("$pass", evalSummary.PassedChecks);
+                csCmd.Parameters.AddWithValue("$fail", evalSummary.FailedChecks);
+                csCmd.Parameters.AddWithValue("$inv", evalSummary.InvalidValueChecks);
+                csCmd.Parameters.AddWithValue("$neval", evalSummary.NotEvaluatedChecks);
+                csCmd.Parameters.AddWithValue("$fix", totalFixedIssues);
+                csCmd.Parameters.AddWithValue("$new", totalNewIssues);
+                csCmd.Parameters.AddWithValue("$act", totalActiveIssues);
+                csCmd.Parameters.AddWithValue("$reg", totalRegressedIssues);
+                csCmd.Parameters.AddWithValue("$add", totalAddedElems);
+                csCmd.Parameters.AddWithValue("$rem", totalRemovedElems);
+                csCmd.Parameters.AddWithValue("$mod", totalModifiedElems);
+                csCmd.ExecuteNonQuery();
+            }
+
             using (var colCmd = conn.CreateCommand())
             {
                 colCmd.CommandText = "INSERT INTO priority_columns VALUES (@ord, @name)";
@@ -1067,7 +1491,7 @@ public partial class MainWindow : Window
 
             using (var mCmd = conn.CreateCommand())
             {
-                mCmd.CommandText = "INSERT INTO models VALUES (@id, @path, @status, DateTime('now'), DateTime('now'), @count, @vnum, @vname, @delta, @urn)";
+                mCmd.CommandText = "INSERT INTO models VALUES (@id, @path, @status, DateTime('now'), DateTime('now'), @count, @vnum, @vname, @delta, @add, @rem, @mod, @urn)";
                 var pId = mCmd.Parameters.Add("@id", SqliteType.Integer);
                 var pPath = mCmd.Parameters.Add("@path", SqliteType.Text);
                 var pStatus = mCmd.Parameters.Add("@status", SqliteType.Text);
@@ -1075,18 +1499,24 @@ public partial class MainWindow : Window
                 var pVnum = mCmd.Parameters.Add("@vnum", SqliteType.Integer);
                 var pVname = mCmd.Parameters.Add("@vname", SqliteType.Text);
                 var pDelta = mCmd.Parameters.Add("@delta", SqliteType.Integer);
+                var pAdd = mCmd.Parameters.Add("@add", SqliteType.Integer);
+                var pRem = mCmd.Parameters.Add("@rem", SqliteType.Integer);
+                var pMod = mCmd.Parameters.Add("@mod", SqliteType.Integer);
                 var pUrn = mCmd.Parameters.Add("@urn", SqliteType.Text);
 
                 foreach (var m in models)
                 {
-                    var deltaInfo = modelDeltas.GetValueOrDefault(m.modelId, (1, m.count, 0, 0));
+                    var d = modelDeltas.GetValueOrDefault(m.modelId, (1, m.count, 0, 0, 0, 0));
                     pId.Value = m.modelId;
                     pPath.Value = m.item.Name;
                     pStatus.Value = m.status;
                     pCount.Value = m.count;
                     pVnum.Value = m.item.VersionNumber;
                     pVname.Value = string.IsNullOrEmpty(m.item.ViewName) ? "{3D}" : m.item.ViewName;
-                    pDelta.Value = deltaInfo.Item3;
+                    pDelta.Value = d.Item3;
+                    pAdd.Value = d.Item4;
+                    pRem.Value = d.Item5;
+                    pMod.Value = d.Item6;
                     pUrn.Value = m.item.DerivativeUrn ?? "";
                     mCmd.ExecuteNonQuery();
                 }
@@ -1155,8 +1585,8 @@ public partial class MainWindow : Window
             using (var iCmd = conn.CreateCommand())
             {
                 iCmd.CommandText = @"
-                    INSERT INTO issues (model_id, element_id, unique_id, category, family, type_name, rule_id, requirement_id, discipline, severity, parameter_name, actual_value, message)
-                    VALUES (@m, @id, @uid, @cat, @fam, @typ, @rid, @req, @disc, @sev, @pname, @aval, @msg)";
+                    INSERT INTO issues (model_id, element_id, unique_id, category, family, type_name, rule_id, requirement_id, discipline, severity, parameter_name, actual_value, expected_rule, evaluation_status, lifecycle_state, message)
+                    VALUES (@m, @id, @uid, @cat, @fam, @typ, @rid, @req, @disc, @sev, @pname, @aval, @exp, @eval, @life, @msg)";
                 var piM = iCmd.Parameters.Add("@m", SqliteType.Integer);
                 var piId = iCmd.Parameters.Add("@id", SqliteType.Integer);
                 var piUid = iCmd.Parameters.Add("@uid", SqliteType.Text);
@@ -1169,9 +1599,12 @@ public partial class MainWindow : Window
                 var piSev = iCmd.Parameters.Add("@sev", SqliteType.Text);
                 var piPname = iCmd.Parameters.Add("@pname", SqliteType.Text);
                 var piAval = iCmd.Parameters.Add("@aval", SqliteType.Text);
+                var piExp = iCmd.Parameters.Add("@exp", SqliteType.Text);
+                var piEval = iCmd.Parameters.Add("@eval", SqliteType.Text);
+                var piLife = iCmd.Parameters.Add("@life", SqliteType.Text);
                 var piMsg = iCmd.Parameters.Add("@msg", SqliteType.Text);
 
-                foreach (var iss in issues)
+                foreach (var iss in lifecycleIssues)
                 {
                     piM.Value = iss.ModelId;
                     piId.Value = iss.ElementId;
@@ -1185,8 +1618,61 @@ public partial class MainWindow : Window
                     piSev.Value = iss.Severity;
                     piPname.Value = iss.ParameterName;
                     piAval.Value = iss.ActualValue;
+                    piExp.Value = iss.ExpectedRule;
+                    piEval.Value = iss.EvaluationStatus;
+                    piLife.Value = iss.LifecycleState;
                     piMsg.Value = iss.Message;
                     iCmd.ExecuteNonQuery();
+                }
+            }
+
+            using (var dCmd = conn.CreateCommand())
+            {
+                dCmd.CommandText = @"
+                    INSERT INTO element_diffs (model_id, change_type, element_id, unique_id, category, family, type_name, parameter_name, old_value, new_value)
+                    VALUES (@m, @ct, @id, @uid, @cat, @fam, @typ, @pname, @oldv, @newv)";
+                var pdM = dCmd.Parameters.Add("@m", SqliteType.Integer);
+                var pdCt = dCmd.Parameters.Add("@ct", SqliteType.Text);
+                var pdId = dCmd.Parameters.Add("@id", SqliteType.Integer);
+                var pdUid = dCmd.Parameters.Add("@uid", SqliteType.Text);
+                var pdCat = dCmd.Parameters.Add("@cat", SqliteType.Text);
+                var pdFam = dCmd.Parameters.Add("@fam", SqliteType.Text);
+                var pdTyp = dCmd.Parameters.Add("@typ", SqliteType.Text);
+                var pdPname = dCmd.Parameters.Add("@pname", SqliteType.Text);
+                var pdOld = dCmd.Parameters.Add("@oldv", SqliteType.Text);
+                var pdNew = dCmd.Parameters.Add("@newv", SqliteType.Text);
+
+                foreach (var df in elementDiffs)
+                {
+                    pdM.Value = df.ModelId;
+                    pdCt.Value = df.ChangeType;
+                    pdId.Value = df.ElementId;
+                    pdUid.Value = df.UniqueId;
+                    pdCat.Value = df.Category;
+                    pdFam.Value = df.Family;
+                    pdTyp.Value = df.TypeName;
+                    pdPname.Value = df.ParameterName;
+                    pdOld.Value = df.OldValue;
+                    pdNew.Value = df.NewValue;
+                    dCmd.ExecuteNonQuery();
+                }
+            }
+
+            using (var errCmd = conn.CreateCommand())
+            {
+                errCmd.CommandText = "INSERT INTO errors VALUES (DateTime('now'), @m, 0, @stg, @type, @msg)";
+                var peM = errCmd.Parameters.Add("@m", SqliteType.Integer);
+                var peStg = errCmd.Parameters.Add("@stg", SqliteType.Text);
+                var peType = errCmd.Parameters.Add("@type", SqliteType.Text);
+                var peMsg = errCmd.Parameters.Add("@msg", SqliteType.Text);
+
+                foreach (var er in errorLogs)
+                {
+                    peM.Value = er.modelId;
+                    peStg.Value = er.stage;
+                    peType.Value = er.type;
+                    peMsg.Value = er.message;
+                    errCmd.ExecuteNonQuery();
                 }
             }
 
@@ -1199,8 +1685,9 @@ public partial class MainWindow : Window
                 CREATE INDEX ix_parameter_name ON parameters(name);
                 CREATE INDEX ix_parameter_element ON parameters(model_id, element_id);
                 CREATE INDEX ix_element_cat ON elements(category);
-                CREATE INDEX ix_issues_disc ON issues(discipline, severity);
+                CREATE INDEX ix_issues_disc ON issues(discipline, severity, lifecycle_state);
                 CREATE INDEX ix_issues_rule ON issues(rule_id);
+                CREATE INDEX ix_diffs_type ON element_diffs(change_type, model_id);
             ";
             idxCmd.ExecuteNonQuery();
         }
@@ -1209,19 +1696,17 @@ public partial class MainWindow : Window
         var utf8Bom = new UTF8Encoding(encoderShouldEmitUTF8Identifier: true);
         var modelNameMap = models.ToDictionary(m => m.modelId, m => m.item.Name);
 
-        // 1. models.csv
         var modelsCsv = Path.Combine(runDir, "models.csv");
         using (var swM = new StreamWriter(modelsCsv, false, utf8Bom))
         {
-            swM.WriteLine("model_id,path,version_number,view_name,status,element_count,delta_elements");
+            swM.WriteLine("model_id,path,version_number,view_name,status,element_count,delta_elements,added_elements,removed_elements,modified_elements");
             foreach (var m in models)
             {
-                var d = modelDeltas.GetValueOrDefault(m.modelId, (1, m.count, 0, 0));
-                swM.WriteLine($"{m.modelId},{EscapeCsv(m.item.Name)},{m.item.VersionNumber},{EscapeCsv(m.item.ViewName)},{m.status},{m.count},{d.Item3}");
+                var d = modelDeltas.GetValueOrDefault(m.modelId, (1, m.count, 0, 0, 0, 0));
+                swM.WriteLine($"{m.modelId},{EscapeCsv(m.item.Name)},{m.item.VersionNumber},{EscapeCsv(m.item.ViewName)},{m.status},{m.count},{d.Item3},{d.Item4},{d.Item5},{d.Item6}");
             }
         }
 
-        // 2. elements.csv
         var elementsCsv = Path.Combine(runDir, "elements.csv");
         using (var swE = new StreamWriter(elementsCsv, false, utf8Bom))
         {
@@ -1233,7 +1718,6 @@ public partial class MainWindow : Window
             }
         }
 
-        // 3. parameters.csv
         var paramsCsv = Path.Combine(runDir, "parameters.csv");
         using (var swP = new StreamWriter(paramsCsv, false, utf8Bom))
         {
@@ -1244,15 +1728,14 @@ public partial class MainWindow : Window
             }
         }
 
-        // 4. issues.csv & fix_candidates.json (for Revit Fix Assistant by Team AR/ID/MEP/STR)
         var issuesCsv = Path.Combine(runDir, "issues.csv");
         using (var swI = new StreamWriter(issuesCsv, false, utf8Bom))
         {
-            swI.WriteLine("model_id,model_name,element_id,unique_id,discipline,severity,rule_id,requirement_id,category,family,type_name,parameter_name,actual_value,message");
-            foreach (var iss in issues)
+            swI.WriteLine("model_id,model_name,element_id,unique_id,discipline,severity,lifecycle_state,evaluation_status,rule_id,requirement_id,category,family,type_name,parameter_name,actual_value,expected_rule,message");
+            foreach (var iss in lifecycleIssues)
             {
                 var mName = modelNameMap.GetValueOrDefault(iss.ModelId, "");
-                swI.WriteLine($"{iss.ModelId},{EscapeCsv(mName)},{iss.ElementId},{EscapeCsv(iss.UniqueId)},{EscapeCsv(iss.Discipline)},{EscapeCsv(iss.Severity)},{EscapeCsv(iss.RuleId)},{EscapeCsv(iss.RequirementId)},{EscapeCsv(iss.Category)},{EscapeCsv(iss.Family)},{EscapeCsv(iss.TypeName)},{EscapeCsv(iss.ParameterName)},{EscapeCsv(iss.ActualValue)},{EscapeCsv(iss.Message)}");
+                swI.WriteLine($"{iss.ModelId},{EscapeCsv(mName)},{iss.ElementId},{EscapeCsv(iss.UniqueId)},{EscapeCsv(iss.Discipline)},{EscapeCsv(iss.Severity)},{EscapeCsv(iss.LifecycleState)},{EscapeCsv(iss.EvaluationStatus)},{EscapeCsv(iss.RuleId)},{EscapeCsv(iss.RequirementId)},{EscapeCsv(iss.Category)},{EscapeCsv(iss.Family)},{EscapeCsv(iss.TypeName)},{EscapeCsv(iss.ParameterName)},{EscapeCsv(iss.ActualValue)},{EscapeCsv(iss.ExpectedRule)},{EscapeCsv(iss.Message)}");
             }
         }
 
@@ -1260,31 +1743,32 @@ public partial class MainWindow : Window
         var fixPayload = JsonSerializer.Serialize(new
         {
             runId,
+            projectId,
             projectName,
             generatedUtc = DateTime.UtcNow.ToString("O"),
-            totalIssues = issues.Count,
-            issues = issues.Take(2000)
+            totalIssues = lifecycleIssues.Count,
+            issues = lifecycleIssues.Select(iss => new
+            {
+                iss.ModelId,
+                ModelName = modelNameMap.GetValueOrDefault(iss.ModelId, ""),
+                iss.ElementId,
+                iss.UniqueId,
+                iss.Category,
+                iss.Family,
+                iss.TypeName,
+                iss.RuleId,
+                iss.RequirementId,
+                iss.Discipline,
+                iss.Severity,
+                iss.ParameterName,
+                iss.ActualValue,
+                iss.ExpectedRule,
+                iss.EvaluationStatus,
+                iss.LifecycleState,
+                iss.Message
+            }).Take(2500)
         }, new JsonSerializerOptions { WriteIndented = true });
         File.WriteAllText(fixJsonPath, fixPayload, Encoding.UTF8);
-
-        // 5. elements_wide.csv
-        var elemParamMap = new Dictionary<(int mId, long elId), Dictionary<string, string>>();
-        var paramFrequency = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-
-        foreach (var (mId, pr) in parameters)
-        {
-            var key = (mId, pr.ElementId);
-            if (!elemParamMap.TryGetValue(key, out var pDict))
-            {
-                pDict = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-                elemParamMap[key] = pDict;
-            }
-            if (!pDict.ContainsKey(pr.Name))
-            {
-                pDict[pr.Name] = pr.DisplayValue;
-                paramFrequency[pr.Name] = paramFrequency.GetValueOrDefault(pr.Name) + 1;
-            }
-        }
 
         var wideColumns = new List<string>();
         var wideSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -1330,6 +1814,8 @@ public partial class MainWindow : Window
                 swW.WriteLine(rowSb.ToString());
             }
         }
+
+        return (totalFixedIssues, totalNewIssues, totalRegressedIssues, totalAddedElems, totalRemovedElems, totalModifiedElems);
     }
 
     private string? GetLatestRunDirectory()

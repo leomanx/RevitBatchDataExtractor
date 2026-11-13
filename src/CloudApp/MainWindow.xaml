@@ -331,8 +331,12 @@
                                         ToolTip="Register or update a Windows Scheduled Task to run headless batch extraction automatically"/>
                             </Grid>
 
-                            <ProgressBar x:Name="ProgBatch" Height="5" Background="#0B132B" Foreground="#00A896" BorderThickness="0" Margin="0,0,0,4"/>
-                            <TextBlock x:Name="TxtProgressStatus" Text="Ready to extract..." FontSize="11" Foreground="#8D99AE"/>
+                            <ProgressBar x:Name="ProgBatch" Height="5" Background="#0B132B" Foreground="#00A896" BorderThickness="0" Margin="0,0,0,6"/>
+                            <Grid>
+                                <TextBlock x:Name="TxtProgressStatus" Text="Ready to extract..." FontSize="11" Foreground="#8D99AE" VerticalAlignment="Center"/>
+                                <CheckBox x:Name="ChkSkipUnchanged" Content="Skip unchanged model versions (Incremental Resume)"
+                                          IsChecked="False" FontSize="11" Foreground="#94A3B8" HorizontalAlignment="Right" Margin="0"/>
+                            </Grid>
                         </StackPanel>
                     </Border>
 
