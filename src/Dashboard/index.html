@@ -141,6 +141,7 @@ dialog::backdrop{background:rgba(15,23,42,.55)}
     <div style="display:flex;gap:8px;flex-wrap:wrap">
       <button class="button primary" id="btnToggle3DViewer">Open 3D Cloud Viewer (SVF2)</button>
       <button class="button" id="btnHeaderSheetSet">2D / PDF Sheet Set</button>
+      <button class="button" id="btnHeaderTelegramBot">Telegram Query Bot (No-AI)</button>
       <button class="button" id="btnToggleCols">Configure Table Columns</button>
       <button class="button" id="print">Print / Export PDF</button>
     </div>
@@ -591,7 +592,7 @@ dialog::backdrop{background:rgba(15,23,42,.55)}
   <div class="heading-row">
     <div>
       <h2>2D Drawing Sheet Set &amp; Cloud Vector PDF Exporter</h2>
-      <p id="sheetSetMeta" class="muted">Inspect published 2D Sheets &amp; 3D Views from ACC Model Derivative, download Native Vector Cloud PDFs, or compile a multi-page PDF Sheet Set.</p>
+      <p id="sheetSetSummaryText" class="muted">Inspect published 2D Sheets &amp; 3D Views from ACC Model Derivative, download Native Vector Cloud PDFs, or compile a multi-page PDF Sheet Set.</p>
     </div>
     <button id="closeSheetSetModal" class="button">Close</button>
   </div>
@@ -613,13 +614,100 @@ dialog::backdrop{background:rgba(15,23,42,.55)}
           <th style="width:45px">Select</th>
           <th>Role</th>
           <th>Sheet / View Name</th>
-          <th>Viewable GUID</th>
           <th>Cloud Vector PDF Status</th>
           <th>Actions</th>
         </tr>
       </thead>
       <tbody id="sheetSetRows"></tbody>
     </table>
+  </div>
+</dialog>
+
+<!-- Deterministic Telegram BIM & QTO Query Bot Modal -->
+<dialog id="telegramModal" style="width:min(1180px,95vw)">
+  <div class="heading-row">
+    <div>
+      <h2>Deterministic Telegram BIM &amp; Quantity Query Bot (Zero-AI)</h2>
+      <p class="muted">Query Hub/Project -> Model -> Level -> Category, Quantity Take-Off (Area/Volume/Length), Room Schedules, QA/QC Issues, and Cloud Vector PDFs directly from Telegram without AI tokens.</p>
+    </div>
+    <button id="closeTelegramModal" class="button">Close</button>
+  </div>
+
+  <div class="grid-2" style="margin-bottom:0;align-items:start">
+    <!-- Left Column: Bot Connection & Architecture Plan -->
+    <div style="display:flex;flex-direction:column;gap:12px">
+      <div class="panel" style="margin-bottom:0">
+        <div class="heading-row">
+          <h2>1. Telegram Bot Long-Polling Connection (DPAPI Secured)</h2>
+          <span id="tgStatusBadge" class="badge Warning">Checking...</span>
+        </div>
+        <p class="muted" style="margin-bottom:10px">Paste your Bot Token from <code>@BotFather</code>. It is encrypted via Windows DPAPI and runs via outbound Long-Polling (no public IP, webhook, or AI cost required).</p>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <input type="password" id="tgBotTokenInput" placeholder="Paste Telegram Bot Token (or leave blank to use saved DPAPI token)..." style="flex:1;min-width:240px" />
+          <button type="button" class="button primary" id="btnTgStart">Start / Connect Bot</button>
+          <button type="button" class="button" id="btnTgStop">Stop</button>
+        </div>
+        <div id="tgConnInfo" class="muted" style="margin-top:8px;font-size:12px"></div>
+      </div>
+
+      <div class="panel" style="margin-bottom:0">
+        <div class="heading-row">
+          <h2>2. Anti-Clutter Query Architecture &amp; Numeric QTO Scope</h2>
+        </div>
+        <div style="font-size:12.5px;line-height:1.55;color:#334155">
+          <div><strong>• Context Hierarchy:</strong> <code>/projects</code> &rarr; <code>/models</code> &rarr; <code>/levels</code> &rarr; <code>/cats</code></div>
+          <div><strong>• Automatic Numeric QTO:</strong> Computes <code>COUNT</code>, <code>SUM</code>, <code>AVG</code>, <code>MIN</code>, <code>MAX</code> for <strong>Area (m&sup2;)</strong>, <strong>Volume (m&sup3;)</strong>, <strong>Length (m)</strong>, <strong>Height</strong>, <strong>Width</strong>, and <strong>Cost</strong>.</div>
+          <div><strong>• Numeric Filter Operators:</strong> <code>/num Area &gt; 50</code>, <code>/num Volume &gt;= 10</code>, <code>/num Fire Rating = 2 HR</code></div>
+          <div><strong>• Room &amp; Area Schedule:</strong> <code>/rooms [Level/Keyword]</code> &mdash; Net/Gross Floor Area rollup + sorted room table.</div>
+          <div><strong>• Anti-Clutter Digest:</strong> Summarizes totals + Top 5 types + 5 sample items per page with in-place <code>[◀ Prev 5] [Next 5 ▶]</code> buttons and 1-tap <code>.CSV</code> / <code>.PDF</code> file attachments.</div>
+        </div>
+      </div>
+
+      <div class="panel" style="margin-bottom:0">
+        <div class="heading-row">
+          <h2>3. Live Bot Polling &amp; Query Activity Log</h2>
+          <button type="button" class="chip-btn" id="btnTgRefreshStatus">Refresh Status</button>
+        </div>
+        <pre id="tgActivityLog" style="background:#0f172a;color:#e2e8f0;padding:10px;border-radius:8px;font-size:11.5px;max-height:160px;overflow:auto;margin:0">Ready.</pre>
+      </div>
+    </div>
+
+    <!-- Right Column: Interactive Mobile Telegram Simulator -->
+    <div class="panel" style="margin-bottom:0;background:#0f172a;color:#f8fafc;border-color:#1e293b">
+      <div class="heading-row" style="margin-bottom:10px">
+        <div>
+          <h2 style="color:#5eead4">Interactive Telegram Chat Simulator (Live SQLite)</h2>
+          <p style="font-size:11.5px;color:#94a3b8;margin:2px 0 0">Test the exact responses, QTO calculations, and inline buttons right here or from your phone.</p>
+        </div>
+      </div>
+
+      <!-- Quick Command Chips -->
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">
+        <button type="button" class="chip-btn tg-quick-cmd" data-cmd="/menu">/menu</button>
+        <button type="button" class="chip-btn tg-quick-cmd" data-cmd="/projects">/projects</button>
+        <button type="button" class="chip-btn tg-quick-cmd" data-cmd="/models">/models</button>
+        <button type="button" class="chip-btn tg-quick-cmd" data-cmd="/levels">/levels</button>
+        <button type="button" class="chip-btn tg-quick-cmd" data-cmd="/cats">/cats</button>
+        <button type="button" class="chip-btn tg-quick-cmd" data-cmd="/qto">/qto (All Area/Vol)</button>
+        <button type="button" class="chip-btn tg-quick-cmd" data-cmd="/rooms">/rooms (m&sup2;)</button>
+        <button type="button" class="chip-btn tg-quick-cmd" data-cmd="/num Area > 25">/num Area &gt; 25</button>
+        <button type="button" class="chip-btn tg-quick-cmd" data-cmd="/sum Area">/sum Area</button>
+        <button type="button" class="chip-btn tg-quick-cmd" data-cmd="/issues">/issues</button>
+        <button type="button" class="chip-btn tg-quick-cmd" data-cmd="/sheets">/sheets (PDF)</button>
+      </div>
+
+      <!-- Simulated Telegram Message Bubble -->
+      <div id="tgSimBubble" style="background:#1e293b;border:1px solid #334155;border-radius:10px;padding:14px;font-size:13px;line-height:1.55;white-space:pre-wrap;max-height:360px;overflow-y:auto;color:#f1f5f9;font-family:'Segoe UI',system-ui,sans-serif">Loading /menu...</div>
+
+      <!-- Simulated Inline Keyboard Matrix -->
+      <div id="tgSimButtons" style="display:flex;flex-direction:column;gap:6px;margin-top:10px"></div>
+
+      <!-- Command Input Bar -->
+      <div style="display:flex;gap:8px;margin-top:12px">
+        <input type="text" id="tgSimInput" placeholder="Type command e.g. /find Door, /qto Walls, /num Area > 50, or Element ID..." style="flex:1;background:#1e293b;color:#f8fafc;border-color:#475569" />
+        <button type="button" class="button primary" id="btnTgSimSend">Send Query</button>
+      </div>
+    </div>
   </div>
 </dialog>
 
@@ -1930,8 +2018,9 @@ async function openSheetSetModal() {
         ? '<span class="badge Fix">Native Vector PDF Ready</span>'
         : '<span class="badge Warning">SVF2 Printable Sheet</span>';
       const safeFileName = (item.name || ('Sheet_' + (idx + 1))).replace(/[^\w\-. ]+/g, '_') + '.pdf';
-      const pdfDownloadUrl = item.hasNativePdf
-        ? `api/download-pdf?urn=${encodeURIComponent(manifest.urn)}&derivativeUrn=${encodeURIComponent(item.pdfDerivativeUrn)}&name=${encodeURIComponent(safeFileName)}`
+      const pdfDeriv = item.pdfUrn || item.pdfDerivativeUrn || '';
+      const pdfDownloadUrl = item.hasNativePdf && pdfDeriv
+        ? `api/download-pdf?urn=${encodeURIComponent(manifest.urn)}&derivativeUrn=${encodeURIComponent(pdfDeriv)}&name=${encodeURIComponent(safeFileName)}`
         : '';
 
       return `<tr>
@@ -2093,6 +2182,132 @@ $('btnCompileMultiPagePdf').onclick = async () => {
 </html>`);
   printWin.document.close();
 };
+
+// =========================================================================
+// DETERMINISTIC TELEGRAM QUERY BOT & INTERACTIVE SIMULATOR
+// =========================================================================
+async function refreshTelegramStatus() {
+  try {
+    const st = await api('telegram-status');
+    const badge = $('tgStatusBadge');
+    if (st.isRunning) {
+      badge.className = 'badge Fix';
+      badge.textContent = 'Running (' + (st.botUsername || 'Long-Polling') + ')';
+    } else if (st.hasStoredToken) {
+      badge.className = 'badge Info';
+      badge.textContent = 'Token Saved (Stopped)';
+    } else {
+      badge.className = 'badge Warning';
+      badge.textContent = 'Not Configured';
+    }
+    $('tgConnInfo').textContent = `Queries Handled: ${st.totalQueriesHandled || 0} | Active Chat Sessions: ${st.activeSessions || 0} | DPAPI Token Stored: ${st.hasStoredToken ? 'Yes' : 'No'}`;
+    if (st.logs && st.logs.length > 0) {
+      $('tgActivityLog').textContent = st.logs.join('\n');
+    } else {
+      $('tgActivityLog').textContent = 'No live Telegram polling logs yet. Use the Simulator on the right or connect your Bot Token above.';
+    }
+  } catch (e) {
+    $('tgConnInfo').textContent = 'Status check failed: ' + e.message;
+  }
+}
+
+async function runTelegramSimCommand(cmdText, isCallback = false) {
+  $('tgSimBubble').innerHTML = '<span style="color:#94a3b8">Querying SQLite / Cloud Manifest...</span>';
+  try {
+    const res = await api('telegram-simulate', new URLSearchParams({
+      cmd: cmdText,
+      cb: isCallback ? '1' : '0'
+    }));
+
+    $('tgSimBubble').innerHTML = res.html || '';
+
+    if (res.hasAttachment && res.attachmentBase64) {
+      const binStr = atob(res.attachmentBase64);
+      const bytes = new Uint8Array(binStr.length);
+      for (let i = 0; i < binStr.length; i++) bytes[i] = binStr.charCodeAt(i);
+      const blob = new Blob([bytes], { type: res.attachmentMime || 'application/octet-stream' });
+      const dlUrl = URL.createObjectURL(blob);
+      const dlLink = document.createElement('div');
+      dlLink.style.marginTop = '10px';
+      dlLink.innerHTML = `<a href="${dlUrl}" download="${esc(res.attachmentName)}" style="display:inline-block;background:#10b981;color:#042f2e;font-weight:700;padding:6px 12px;border-radius:6px;text-decoration:none;">📥 Download Attached File: ${esc(res.attachmentName)}</a>`;
+      $('tgSimBubble').appendChild(dlLink);
+    }
+
+    const btnWrap = $('tgSimButtons');
+    btnWrap.innerHTML = '';
+    for (const row of (res.buttons || [])) {
+      const rowDiv = document.createElement('div');
+      rowDiv.style.display = 'grid';
+      rowDiv.style.gridTemplateColumns = `repeat(${row.length}, 1fr)`;
+      rowDiv.style.gap = '6px';
+      for (const b of row) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.textContent = b.label;
+        btn.style.cssText = 'background:#1e293b;color:#38bdf8;border:1px solid #334155;border-radius:6px;padding:7px 8px;font-size:12px;font-weight:600;cursor:pointer;text-align:center;';
+        btn.onmouseenter = () => { btn.style.background = '#334155'; };
+        btn.onmouseleave = () => { btn.style.background = '#1e293b'; };
+        btn.onclick = () => runTelegramSimCommand(b.data, true);
+        rowDiv.appendChild(btn);
+      }
+      btnWrap.appendChild(rowDiv);
+    }
+
+    await refreshTelegramStatus();
+  } catch (e) {
+    $('tgSimBubble').textContent = 'Simulation error: ' + e.message;
+  }
+}
+
+$('btnHeaderTelegramBot').onclick = async () => {
+  $('telegramModal').showModal();
+  await refreshTelegramStatus();
+  await runTelegramSimCommand('/menu', false);
+};
+
+$('closeTelegramModal').onclick = () => $('telegramModal').close();
+$('btnTgRefreshStatus').onclick = refreshTelegramStatus;
+
+$('btnTgStart').onclick = async () => {
+  $('btnTgStart').disabled = true;
+  $('tgConnInfo').textContent = 'Connecting to Telegram API (getMe) and starting Long-Polling listener...';
+  try {
+    const tok = $('tgBotTokenInput').value.trim();
+    await api('telegram-start', new URLSearchParams({ botToken: tok }));
+    $('tgBotTokenInput').value = '';
+    await refreshTelegramStatus();
+  } catch (e) {
+    $('tgConnInfo').textContent = 'Start failed: ' + e.message;
+  } finally {
+    $('btnTgStart').disabled = false;
+  }
+};
+
+$('btnTgStop').onclick = async () => {
+  await api('telegram-stop');
+  await refreshTelegramStatus();
+};
+
+$('btnTgSimSend').onclick = () => {
+  const txt = $('tgSimInput').value.trim();
+  if (!txt) return;
+  runTelegramSimCommand(txt, false);
+};
+
+$('tgSimInput').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    $('btnTgSimSend').click();
+  }
+});
+
+document.querySelectorAll('.tg-quick-cmd').forEach(btn => {
+  btn.onclick = () => {
+    const c = btn.getAttribute('data-cmd');
+    $('tgSimInput').value = c;
+    runTelegramSimCommand(c, false);
+  };
+});
 
 $('btnColorIssues').onclick = () => apply3DHeatmap('issues');
 $('btnColorTeams').onclick = () => apply3DHeatmap('teams');

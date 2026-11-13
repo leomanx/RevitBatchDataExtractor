@@ -9,6 +9,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Data.Sqlite;
+using RBDE.Dashboard;
 
 HttpClient viewerHttp = new() { Timeout = TimeSpan.FromSeconds(30) };
 string? cachedViewerToken = null;
@@ -92,7 +93,19 @@ if (args.Length == 0 || !File.Exists(args[0]))
 
 var database = Path.GetFullPath(args[0]);
 var runDir = Path.GetDirectoryName(database)!;
-var warehousePath = Path.Combine(Path.GetDirectoryName(runDir) ?? runDir, "warehouse.sqlite");
+var outputRootDir = Path.GetDirectoryName(runDir) ?? runDir;
+var warehousePath = Path.Combine(outputRootDir, "warehouse.sqlite");
+
+var telegramBot = new TelegramBotEngine(
+    database,
+    outputRootDir,
+    warehousePath,
+    viewerHttp,
+    async () =>
+    {
+        dynamic tokObj = await GetViewerTokenAsync();
+        return tokObj.GetType().GetProperty("access_token")!.GetValue(tokObj)!.ToString()!;
+    });
 
 using var listener = new HttpListener();
 int port = 0;
@@ -122,7 +135,7 @@ var lastRequest = DateTime.UtcNow;
 while (listener.IsListening)
 {
     var pending = listener.GetContextAsync();
-    while (!pending.IsCompleted && DateTime.UtcNow - lastRequest < TimeSpan.FromMinutes(30))
+    while (!pending.IsCompleted && (telegramBot.IsRunning || DateTime.UtcNow - lastRequest < TimeSpan.FromMinutes(30)))
         await Task.WhenAny(pending, Task.Delay(10000));
     if (!pending.IsCompleted) break;
 
@@ -273,6 +286,10 @@ while (listener.IsListening)
             {
                 "api/viewer-token" => await GetViewerTokenAsync(),
                 "api/model-sheets" => await BuildModelSheetsManifestAsync(q["urn"] ?? ""),
+                "api/telegram-status" => telegramBot.GetStatusSnapshot(),
+                "api/telegram-start" => await telegramBot.StartPollingAsync(q["botToken"]),
+                "api/telegram-stop" => await telegramBot.StopPollingAsync(),
+                "api/telegram-simulate" => await BuildTelegramSimulationAsync(q["cmd"] ?? "/menu", q["cb"] == "1"),
                 "api/overview" => BuildOverview(),
                 "api/elements" => BuildElementsResponse(),
                 "api/heatmap" => BuildHeatmapResponse(),
@@ -528,6 +545,20 @@ while (listener.IsListening)
                     "SELECT e.*, m.path FROM elements e JOIN models m USING(model_id) WHERE e.model_id=$model AND (e.object_id=$dbid OR e.element_id=$elid) LIMIT 1",
                     new() { ["$model"] = targetModel, ["$dbid"] = dbId, ["$elid"] = revitId });
                 return rows.FirstOrDefault() ?? new Dictionary<string, object?>();
+            }
+
+            async Task<object> BuildTelegramSimulationAsync(string cmdText, bool isCb)
+            {
+                var res = await telegramBot.ExecuteCommandOrCallbackAsync(999999L, cmdText, isCb);
+                return new
+                {
+                    html = res.HtmlText,
+                    buttons = res.Buttons.Select(row => row.Select(b => new { label = b.Label, data = b.CallbackData }).ToArray()).ToArray(),
+                    hasAttachment = res.AttachmentBytes is { Length: > 0 },
+                    attachmentName = res.AttachmentFileName ?? "",
+                    attachmentMime = res.AttachmentMime ?? "",
+                    attachmentBase64 = res.AttachmentBytes is { Length: > 0 } ? Convert.ToBase64String(res.AttachmentBytes) : ""
+                };
             }
 
             async Task<object> BuildModelSheetsManifestAsync(string rawUrn)
