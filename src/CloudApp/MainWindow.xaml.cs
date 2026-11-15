@@ -11,6 +11,7 @@ using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using Microsoft.Data.Sqlite;
+using BatchExtractor;
 
 namespace RBDE.CloudApp;
 
@@ -50,6 +51,7 @@ public partial class MainWindow : Window
     private List<ModelFileItem> currentModels = [];
     private readonly List<CategoryOptionItem> categoryOptions = [];
     private bool suppressPresetEvent;
+    private readonly UserPresetStore userColumnPresets = new();
 
     public MainWindow()
     {
@@ -68,7 +70,55 @@ public partial class MainWindow : Window
         rulesPath = Path.Combine(baseDir, "rules.ids.json");
 
         InitializeSchemaControls();
+        RefreshPersonalColumns();
         Loaded += MainWindow_Loaded;
+    }
+
+    private void RefreshPersonalColumns()
+    {
+        try
+        {
+            CmbPersonalColumns.ItemsSource = userColumnPresets.Load().Select(x => x.Name).ToList();
+        }
+        catch (Exception ex)
+        {
+            CmbPersonalColumns.ItemsSource = Array.Empty<string>();
+            MessageBox.Show(this, ex.Message, "Could not read personal presets");
+        }
+    }
+    private void BtnLoadPersonalColumns_Click(object sender, RoutedEventArgs e)
+    {
+        var name = CmbPersonalColumns.SelectedItem as string;
+        if (name is null) return;
+        try
+        {
+            var preset = userColumnPresets.Load().FirstOrDefault(x => x.Name == name);
+            if (preset is not null) TxtPriorityColumns.Text = string.Join(", ", preset.Columns);
+        }
+        catch (Exception ex) { MessageBox.Show(this, ex.Message, "Could not load preset"); }
+    }
+    private void BtnSavePersonalColumns_Click(object sender, RoutedEventArgs e)
+    {
+        var name = Microsoft.VisualBasic.Interaction.InputBox("Name this personal column preset", "Save preset", CmbPersonalColumns.SelectedItem as string ?? "My columns").Trim();
+        if (name.Length == 0) return;
+        try
+        {
+            userColumnPresets.Save(name, ParsePriorityColumns());
+            RefreshPersonalColumns();
+            CmbPersonalColumns.SelectedItem = name;
+        }
+        catch (Exception ex) { MessageBox.Show(this, ex.Message, "Preset not saved"); }
+    }
+    private void BtnDeletePersonalColumns_Click(object sender, RoutedEventArgs e)
+    {
+        var name = CmbPersonalColumns.SelectedItem as string;
+        if (name is null) return;
+        try
+        {
+            userColumnPresets.Delete(name);
+            RefreshPersonalColumns();
+        }
+        catch (Exception ex) { MessageBox.Show(this, ex.Message, "Preset not deleted"); }
     }
 
     private void InitializeSchemaControls()
@@ -849,14 +899,9 @@ public partial class MainWindow : Window
                 Log($"\n>>> [{modelId}/{selectedModels.Count}] {model.Name}");
                 try
                 {
-                    var (elements, paramValues) = await aps.ExtractModelAsync(
-                        projectId,
-                        model,
-                        extractAllCategories,
-                        categories,
-                        extractAllParams,
-                        targetParams,
-                        Log);
+                    var (elements, paramValues) = await ExtractModelWithRetryAsync(
+                        projectId, model, extractAllCategories, categories,
+                        extractAllParams, targetParams);
 
                     foreach (var el in elements) allElements.Add((modelId, el));
                     foreach (var pr in paramValues) allParameters.Add((modelId, pr));
@@ -873,9 +918,10 @@ public partial class MainWindow : Window
                 }
                 catch (Exception ex)
                 {
-                    Log($"[ERROR] {model.Name} failed (continuing remaining batch): {ex.Message}");
+                    // Preserve the stack for production-only derivative shapes while continuing the remaining models.
+                    Log($"[ERROR] {model.Name} failed (continuing remaining batch): {ex}");
                     modelRows.Add((modelId, model, "failed", 0));
-                    errorLogs.Add((modelId, "ModelDerivativeExtract", ex.GetType().Name, ex.Message));
+                    errorLogs.Add((modelId, "ModelDerivativeExtract", ex.GetType().Name, ex.ToString()));
                     if (!isHeadless)
                     {
                         Dispatcher.Invoke(() =>
@@ -915,6 +961,20 @@ public partial class MainWindow : Window
                     evalSummary,
                     errorLogs,
                     priorityColumns);
+
+            // Durable, recipient-neutral digest for scheduled runs and later Telegram setup.
+            // No outbound message is sent by extraction itself.
+            File.WriteAllText(Path.Combine(runDir, "readiness_digest.json"), JsonSerializer.Serialize(new
+            {
+                schema = "RBDE-ReadinessDigest-1.0",
+                runId = timestamp, projectId, projectName, generatedUtc = DateTime.UtcNow.ToString("O"),
+                modelCount = modelRows.Count,
+                succeededModels = modelRows.Count(x => x.status == "succeeded"),
+                failedModels = modelRows.Where(x => x.status != "succeeded").Select(x => new { x.item.Id, x.item.Name, x.status }).ToArray(),
+                dataConfidence = new { evalSummary.ApplicableChecks, evalSummary.EvaluatedChecks, evalSummary.PassedChecks, evalSummary.FailedChecks, evalSummary.InvalidValueChecks, evalSummary.NotEvaluatedChecks },
+                change = new { addedElemsCount, removedElemsCount, modifiedElemsCount, fixedIssuesCount, newIssuesCount, regressedIssuesCount },
+                paths = new { database = "extract.sqlite", issues = "issues.csv", changes = "element_diffs.csv" }
+            }, new JsonSerializerOptions { WriteIndented = true }));
         });
 
         sw.Stop();
@@ -947,6 +1007,32 @@ public partial class MainWindow : Window
             if (res == MessageBoxResult.Yes)
             {
                 OpenDashboard(runDir);
+            }
+        }
+    }
+
+    private async Task<(List<ExtractedElement> elements, List<ExtractedParam> parameters)> ExtractModelWithRetryAsync(
+        string projectId,
+        ModelFileItem model,
+        bool extractAllCategories,
+        HashSet<string> categories,
+        bool extractAllParams,
+        HashSet<string> targetParams)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                return await aps.ExtractModelAsync(
+                    projectId, model, extractAllCategories, categories,
+                    extractAllParams, targetParams, Log);
+            }
+            catch (Exception ex) when (attempt == 1 &&
+                (ex is KeyNotFoundException || ex is JsonException))
+            {
+                // APS can briefly return an incomplete derivative document while caches converge.
+                Log($"[WARN] Incomplete derivative payload for {model.Name}; retrying once: {ex.Message}");
+                await Task.Delay(TimeSpan.FromSeconds(2));
             }
         }
     }
@@ -1077,7 +1163,12 @@ public partial class MainWindow : Window
                 "ALTER TABLE runs ADD COLUMN fixed_count INTEGER DEFAULT 0",
                 "ALTER TABLE runs ADD COLUMN new_issue_count INTEGER DEFAULT 0",
                 "ALTER TABLE runs ADD COLUMN regressed_count INTEGER DEFAULT 0",
-                "ALTER TABLE model_versions ADD COLUMN project_id TEXT DEFAULT ''"
+                "ALTER TABLE model_versions ADD COLUMN project_id TEXT DEFAULT ''",
+                "ALTER TABLE issue_registry ADD COLUMN assignee TEXT NOT NULL DEFAULT ''",
+                "ALTER TABLE issue_registry ADD COLUMN due_date TEXT NOT NULL DEFAULT ''",
+                "ALTER TABLE issue_registry ADD COLUMN comment TEXT NOT NULL DEFAULT ''",
+                "ALTER TABLE issue_registry ADD COLUMN reviewer_signoff TEXT NOT NULL DEFAULT ''",
+                "ALTER TABLE issue_registry ADD COLUMN reviewed_utc TEXT NOT NULL DEFAULT ''"
             })
             {
                 try { using var ac = wConn.CreateCommand(); ac.CommandText = alterSql; ac.ExecuteNonQuery(); } catch { }
@@ -1273,8 +1364,13 @@ public partial class MainWindow : Window
 
                     using var upIss = wConn.CreateCommand();
                     upIss.CommandText = @"
-                        INSERT OR REPLACE INTO issue_registry
-                        VALUES ($pid, $lid, $uid, $rid, $pname, $disc, $sev, 'Open', $first, $last, '', $reopen)";
+                        INSERT INTO issue_registry
+                        (project_id,lineage_id,unique_id,rule_id,parameter_name,discipline,severity,status,first_seen_run,last_seen_run,closed_run,reopened_count)
+                        VALUES ($pid, $lid, $uid, $rid, $pname, $disc, $sev, 'Open', $first, $last, '', $reopen)
+                        ON CONFLICT(project_id,lineage_id,unique_id,rule_id,parameter_name) DO UPDATE SET
+                        discipline=excluded.discipline,severity=excluded.severity,status='Open',
+                        last_seen_run=excluded.last_seen_run,closed_run='',reopened_count=excluded.reopened_count,
+                        reviewer_signoff='',reviewed_utc=''";
                     upIss.Parameters.AddWithValue("$pid", projectId);
                     upIss.Parameters.AddWithValue("$lid", m.item.Id);
                     upIss.Parameters.AddWithValue("$uid", uidKey);
@@ -1374,7 +1470,9 @@ public partial class MainWindow : Window
                     added_elements INTEGER DEFAULT 0,
                     removed_elements INTEGER DEFAULT 0,
                     modified_elements INTEGER DEFAULT 0,
-                    derivative_urn TEXT DEFAULT ''
+                    derivative_urn TEXT DEFAULT '',
+                    lineage_id TEXT NOT NULL DEFAULT '',
+                    project_id TEXT NOT NULL DEFAULT ''
                 );
                 CREATE TABLE elements (
                     model_id INTEGER NOT NULL,
@@ -1491,7 +1589,7 @@ public partial class MainWindow : Window
 
             using (var mCmd = conn.CreateCommand())
             {
-                mCmd.CommandText = "INSERT INTO models VALUES (@id, @path, @status, DateTime('now'), DateTime('now'), @count, @vnum, @vname, @delta, @add, @rem, @mod, @urn)";
+                mCmd.CommandText = "INSERT INTO models VALUES (@id, @path, @status, DateTime('now'), DateTime('now'), @count, @vnum, @vname, @delta, @add, @rem, @mod, @urn, @lineage, @project)";
                 var pId = mCmd.Parameters.Add("@id", SqliteType.Integer);
                 var pPath = mCmd.Parameters.Add("@path", SqliteType.Text);
                 var pStatus = mCmd.Parameters.Add("@status", SqliteType.Text);
@@ -1503,6 +1601,8 @@ public partial class MainWindow : Window
                 var pRem = mCmd.Parameters.Add("@rem", SqliteType.Integer);
                 var pMod = mCmd.Parameters.Add("@mod", SqliteType.Integer);
                 var pUrn = mCmd.Parameters.Add("@urn", SqliteType.Text);
+                var pLineage = mCmd.Parameters.Add("@lineage", SqliteType.Text);
+                var pProject = mCmd.Parameters.Add("@project", SqliteType.Text);
 
                 foreach (var m in models)
                 {
@@ -1518,6 +1618,8 @@ public partial class MainWindow : Window
                     pRem.Value = d.Item5;
                     pMod.Value = d.Item6;
                     pUrn.Value = m.item.DerivativeUrn ?? "";
+                    pLineage.Value = m.item.Id;
+                    pProject.Value = projectId;
                     mCmd.ExecuteNonQuery();
                 }
             }

@@ -55,4 +55,10 @@ using (var db = new SqliteConnection(new SqliteConnectionStringBuilder { DataSou
 }
 Check(File.ReadAllText(Path.Combine(directory, "elements.csv")).Contains("ไทย"), "UTF-8 Thai export");
 Check(File.ReadAllText(Path.Combine(directory, "errors.jsonl")).Contains("Synthetic failure"), "durable JSONL errors");
+var presetStore = new UserPresetStore(Path.Combine(directory, "personal-presets.json"));
+presetStore.Save("My QA", ["Mark", "Area", "mark"]);
+Check(presetStore.Load().Single().Columns.SequenceEqual(["Mark", "Area"]), "personal preset deduplicates columns");
+presetStore.Save("My QA", ["Fire Rating"]);
+Check(new UserPresetStore(Path.Combine(directory, "personal-presets.json")).Load().Single().Columns.SequenceEqual(["Fire Rating"]), "personal preset survives reload and updates");
+Check(presetStore.Delete("My QA").Count == 0, "personal preset removal");
 Console.WriteLine($"{passed} checks passed. Test artifacts: {directory}");

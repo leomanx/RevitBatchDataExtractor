@@ -65,14 +65,22 @@ All routes are served under `http://localhost:<port>/<session-token>/`:
 
 ---
 
-## 4. Recommended Next Steps for Codex Continuation
+## 4. Current Production Validation & Recommended Continuation
 
-1. **Issue Assignment, Due Dates & Sign-Off Workflow (`issue_registry` Extension):**
-   - Add `assignee`, `due_date`, `comment`, and `reviewer_signoff` columns to `issue_registry` in `output/warehouse.sqlite`.
-   - Expose an inline status/assignment editor in Tab 03 (`Rules & Team Action Queue`) and allow Telegram users to acknowledge or comment on an issue via `/ack <IssueId> <Note>`.
-2. **BCF 2.1 / 3.0 Issue Export (`.bcfzip`):**
-   - Combine the APS Viewer camera state (`getState().viewport`), cropped `.PNG` snapshot, and `UniqueId` (`IfcGuid`) from `RBDE.Dashboard` to export standard `.bcfzip` packages for Navisworks, Solibri, Revizto, and BIMcollab.
-3. **Multi-Model Federated Loading in APS Viewer:**
-   - Extend `load3DModelByModelId` in `src/Dashboard/index.html` with an `"Overlay Link Model"` button that calls `apsViewer.loadDocumentNode(doc, node, { keepCurrentModels: true, globalOffset: ... })` so Architecture, Structure, and MEP SVF2 models can be sectioned together in a single viewport.
-4. **Automated Scheduled Extraction + Proactive Telegram Digest Push:**
-   - In `MainWindow.RunHeadlessScheduledBatchAsync`, after `SaveToDatabaseAndCsv` completes, automatically invoke `TelegramBotEngine` to push a concise **Morning BIM Readiness & Diff Digest** (plus `issues.csv`) to configured project Telegram group chats.
+Live ACC validation was completed on 2026-11-15 against a private production project. Three representative RVT versions completed successfully: 21,359 elements, 651,918 parameters, and 15,586/15,586 evaluated checks. SQLite integrity and parsed CSV parity passed. An architectural SVF2 model loaded in the viewer, and native PDFs were validated on two published models. The detailed production report remains local under the git-ignored `test-output/` directory because it contains project-specific evidence.
+
+Completed since the former roadmap was written:
+
+- Issue assignment, due date, comments, audit trail, reviewer sign-off, and BCF issue export.
+- Multi-model APS Viewer federation controls.
+- Durable `readiness_digest.json` output for a later Telegram delivery adapter.
+- Personal user-defined column presets, full paged exports, readiness logic, and production-safe model fault isolation.
+- One bounded retry for transient incomplete APS derivative JSON; full exception details remain in the error log.
+
+Recommended next steps, in order:
+
+1. **Named Scope + Approved Baseline:** Persist a stable scope ID (model lineage set + rule-pack hash) with every run. Only calculate formal Added/Removed/Regressed metrics against a compatible approved baseline. Existing warehouse history includes partial test scopes and must not be treated as an approved project delta.
+2. **Sheet Readiness Gate:** From manifest/sheet metadata and rendered geometry, detect empty or near-empty sheets, viewport content coverage, placeholder title-block fields, missing issue metadata, and scale/title inconsistencies. The production A101 sample is valid but has very low drawing-content density.
+3. **Production Rule-Pack Calibration:** Review the 726 real findings (353 High, 373 Medium), especially Type Mark, Level, and Mark requirements. Separate category-applicable requirements from genuinely missing information before enforcing ISO 19650 delivery gates.
+4. **Telegram Delivery Adapter:** Consume `readiness_digest.json` after a successful scheduled run and send only to explicitly configured chats. Keep extraction independent from outbound messaging; add idempotency by `runId` and retry/audit records.
+5. **Wider Production Sampling:** Validate at least one Architecture, Structure, and MEP model under the same named scope, including a model with both 2D sheets and 3D views, before declaring the workflow project-ready.

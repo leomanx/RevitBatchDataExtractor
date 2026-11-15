@@ -298,6 +298,12 @@
                             <TextBox x:Name="TxtPriorityColumns" Background="#0B132B" Foreground="#E2E8F0"
                                      BorderBrush="#2D3B60" BorderThickness="1" Padding="8,5" FontSize="11.5"
                                      TextWrapping="Wrap" MaxHeight="52" VerticalScrollBarVisibility="Auto"/>
+                            <StackPanel Orientation="Horizontal" Margin="0,7,0,0">
+                                <ComboBox x:Name="CmbPersonalColumns" Width="190" ToolTip="Presets saved for this Windows user"/>
+                                <Button Content="Load preset" Style="{StaticResource SmallBtn}" Click="BtnLoadPersonalColumns_Click" Margin="6,0,0,0"/>
+                                <Button Content="Save current" Style="{StaticResource SmallBtn}" Click="BtnSavePersonalColumns_Click" Margin="6,0,0,0"/>
+                                <Button Content="Delete" Style="{StaticResource SmallBtn}" Click="BtnDeletePersonalColumns_Click" Margin="6,0,0,0"/>
+                            </StackPanel>
                         </StackPanel>
                     </Border>
 

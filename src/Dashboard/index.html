@@ -35,6 +35,7 @@ p{margin:3px 0}
 .chip-btn:hover{background:#e2e8f0;color:#0f172a}
 .chip-btn.active{background:#ccfbf1;border-color:#0d9488;color:#0f766e}
 .coverage-bar{background:#e0f2fe;border-left:4px solid var(--blue);padding:9px 14px;border-radius:6px;font-size:12px;color:#0c4a6e;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px}
+.coverage-bar details{width:100%}.coverage-bar summary{cursor:pointer;font-weight:700}.coverage-bar #coverageText{padding-top:7px;overflow-wrap:anywhere}
 .readiness-banner{background:#0f172a;color:#f8fafc;border:1px solid #1e293b;border-left:5px solid #ef4444;border-radius:8px;padding:12px 16px;margin-bottom:16px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px}
 .readiness-banner.ready{border-left-color:#10b981}
 .readiness-metrics{display:flex;gap:18px;flex-wrap:wrap;font-size:12px;color:#cbd5e1}
@@ -72,6 +73,13 @@ main.split-mode #apsViewerContainer{height:76vh}
 .fill.completeness{background:var(--blue)}
 .fill.low{background:var(--warn)}
 .bar b{text-align:right;font-weight:600;font-size:12px;color:#334155}
+.category-donut{display:grid;grid-template-columns:150px 1fr;gap:16px;align-items:center}
+.category-ring{width:150px;height:150px;border-radius:50%;display:grid;place-items:center}
+.category-ring span{background:#fff;width:94px;height:94px;border-radius:50%;display:grid;place-items:center;text-align:center;font-weight:700;font-size:12px;padding:8px}
+.category-legend{display:grid;gap:4px;min-width:0}
+.category-legend button{border:0;background:none;text-align:left;padding:4px;border-radius:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.category-legend button:hover{background:#f1f5f9}
+@media(max-width:1150px){aside{position:static;width:auto}main{margin-left:0;padding:16px}.grid-3,.grid-2{grid-template-columns:1fr}.cards{grid-template-columns:repeat(2,1fr)}.filters{grid-template-columns:repeat(2,minmax(0,1fr))}}
 .table-wrap{overflow:auto;max-height:560px;border:1px solid #e2e8f0;border-radius:8px}
 table{width:100%;border-collapse:collapse;font-size:12.5px}
 th{background:#f8fafc;color:#475569;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.5px;position:sticky;top:0;z-index:2;border-bottom:2px solid #cbd5e1;white-space:nowrap}
@@ -153,6 +161,10 @@ dialog::backdrop{background:rgba(15,23,42,.55)}
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
         <strong style="color:#5eead4;font-size:13.5px">APS 2D/3D Coordination Studio (SVF2)</strong>
         <select id="viewerModelSelect" title="Select Model" style="width:220px;margin:0;padding:4px 8px;font-size:12px"></select>
+        <select id="overlayModelSelect" title="Select another model to overlay" style="width:190px;margin:0;padding:4px 8px;font-size:12px"><option value="">Overlay model…</option></select>
+        <button type="button" class="chip-btn" id="btnAddOverlay">Add overlay</button>
+        <button type="button" class="chip-btn" id="btnClearOverlays">Clear overlays</button>
+        <span id="overlayCount" style="font-size:11px;color:#94a3b8">1 model loaded</span>
         <select id="viewerViewableSelect" title="Switch between 3D Views and 2D Drawing Sheets/Plans" style="width:210px;margin:0;padding:4px 8px;font-size:12px">
           <option value="">Default 3D View</option>
         </select>
@@ -218,8 +230,10 @@ dialog::backdrop{background:rgba(15,23,42,.55)}
   </div>
 
   <div id="coverageBanner" class="coverage-bar">
-    <span id="coverageText">View coverage: loading...</span>
-    <span>Note: Model Derivative reflects elements visible in the published 3D view.</span>
+    <details id="coverageDetails"><summary id="coverageSummary">View coverage: loading...</summary>
+      <div id="coverageText"></div>
+      <div>Model Derivative reflects elements visible in the published 3D view.</div>
+    </details>
   </div>
 
   <div id="error" class="error hidden" role="alert"></div>
@@ -332,7 +346,7 @@ dialog::backdrop{background:rgba(15,23,42,.55)}
       <div class="panel" style="margin-bottom:0">
         <div class="heading-row">
           <h2>Category Distribution</h2>
-          <span class="muted">Click bar to filter</span>
+          <select id="categoryChartMode" aria-label="Category chart style" style="width:110px;margin:0"><option value="bar">Ranked bars</option><option value="donut">Share donut</option></select>
         </div>
         <div id="chartCategories"></div>
       </div>
@@ -352,7 +366,7 @@ dialog::backdrop{background:rgba(15,23,42,.55)}
         </div>
         <div class="table-wrap" style="max-height:310px">
           <table>
-            <thead><tr><th>Model (Version)</th><th>View</th><th>Elements (Delta)</th></tr></thead>
+            <thead><tr><th>Model (Version)</th><th>Status / Errors</th><th>Elements (Delta)</th></tr></thead>
             <tbody id="models"></tbody>
           </table>
         </div>
@@ -383,9 +397,17 @@ dialog::backdrop{background:rgba(15,23,42,.55)}
             <button type="button" class="chip-btn" data-preset="materials">Materials &amp; Fire</button>
             <button type="button" class="chip-btn" data-preset="mep">MEP Systems</button>
           </div>
-          <div style="display:flex;align-items:center;gap:8px">
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
             <input id="colSearch" placeholder="Filter column names..." style="width:190px;margin:0;padding:4px 8px;font-size:12px">
             <button type="button" class="chip-btn" id="btnClearCols">Clear Columns</button>
+            <select id="personalPresetSelect" aria-label="Personal column preset" style="width:190px;margin:0"><option value="">My saved presets…</option></select>
+            <button type="button" class="chip-btn" id="btnLoadPersonalPreset">Load</button>
+            <button type="button" class="chip-btn" id="btnSavePersonalPreset">Save current</button>
+            <button type="button" class="chip-btn" id="btnDeletePersonalPreset">Delete</button>
+            <button type="button" class="chip-btn" id="btnExportPersonalPreset">Export preset</button>
+            <button type="button" class="chip-btn" id="btnImportPersonalPreset">Import preset</button>
+            <input type="file" id="personalPresetFile" accept=".json,application/json" class="hidden" aria-label="Import column preset JSON">
+            <span id="personalPresetCoverage" class="muted" style="font-size:12px" aria-live="polite"></span>
           </div>
         </div>
         <div id="colPills" class="col-pills"></div>
@@ -451,8 +473,11 @@ dialog::backdrop{background:rgba(15,23,42,.55)}
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           <button class="button" id="btnExportIssuesCsv">Export Filtered Issues (CSV)</button>
           <button class="button primary" id="btnExportFixJson">Export Team Fix Package (JSON for Revit)</button>
+          <button class="button" id="btnFixedReview">Review verified fixes</button>
+          <button class="button" id="btnExportBcf">Export issues (.bcfzip)</button>
         </div>
       </div>
+      <div id="fixedReviewPanel" class="hidden" style="padding:14px;margin:12px 0;border:1px solid #dce4e6;border-radius:8px"><b>Fixed issues awaiting sign-off</b><div id="fixedReviewRows" class="table-wrap"></div></div>
 
       <div class="filters" style="grid-template-columns:repeat(6,1fr);margin-bottom:14px">
         <label>Responsible Team Code
@@ -507,7 +532,7 @@ dialog::backdrop{background:rgba(15,23,42,.55)}
               <th>Category / Family / Type</th>
               <th>Parameter</th>
               <th>Actual vs Expected</th>
-              <th>Actionable Instruction</th>
+              <th>Actionable Instruction / Owner</th>
             </tr>
           </thead>
           <tbody id="issueRows"></tbody>
@@ -523,6 +548,14 @@ dialog::backdrop{background:rgba(15,23,42,.55)}
       </div>
     </div>
   </section>
+
+  <dialog id="workflowDialog" style="width:min(640px,94vw)">
+    <div class="heading-row"><h2>Issue assignment &amp; sign-off</h2><button type="button" class="button" id="closeWorkflow">Close</button></div>
+    <p class="muted" id="workflowIdentity"></p>
+    <div class="filters"><label>Actor / editor<input id="workflowActor" maxlength="120" placeholder="Your name"></label><label>Assignee<input id="workflowAssignee" maxlength="120"></label><label>Due date<input id="workflowDue" type="date"></label><label>Reviewer sign-off (fixed issues only)<input id="workflowSignoff" maxlength="120"></label></div>
+    <label>Comment<textarea id="workflowComment" maxlength="4000" style="width:100%;min-height:90px"></textarea></label>
+    <p id="workflowStatus" class="muted"></p><button type="button" class="button primary" id="saveWorkflow">Save &amp; audit</button>
+  </dialog>
 
   <!-- TAB 04: Element Diffs, History Warehouse & Extraction Logs -->
   <section id="errors" class="hidden">
@@ -757,6 +790,91 @@ let page=0, epage=0, ipage=0, total=0, etotal=0, itotal=0,
     request=0, errorRequest=0, detailRequest=0,
     activeColumns=[], allAvailableParams=[],
     applied=new URLSearchParams(new FormData($('filters')));
+let categoryDistribution=[];
+const categoryColors=['#0d9488','#0284c7','#7c3aed','#d97706','#dc2626','#0891b2','#84cc16','#94a3b8'];
+function renderCategoryChart(){
+  const categories=categoryDistribution;
+  if(!categories.length){$('chartCategories').innerHTML='<p class="empty">No category data</p>';return}
+  const mode=$('categoryChartMode').value;
+  if(mode==='donut'){
+    const total=categories.reduce((sum,c)=>sum+Number(c.count),0);
+    const shown=categories.slice(0,7), other=total-shown.reduce((sum,c)=>sum+Number(c.count),0);
+    const segments=other>0?[...shown,{category:'Other categories',count:other}]:shown;
+    let angle=0;
+    const stops=segments.map((c,i)=>{const start=angle;angle+=360*Number(c.count)/total;return categoryColors[i]+' '+start+'deg '+angle+'deg'});
+    $('chartCategories').innerHTML='<div class="category-donut"><div class="category-ring" style="background:conic-gradient('+stops.join(',')+')"><span>'+fmt(total)+'<br>elements</span></div><div class="category-legend">'+segments.map((c,i)=>'<button '+(i<shown.length?'data-category="'+i+'"':'disabled')+' title="'+esc(c.category)+' — '+fmt(c.count)+' elements"><span style="color:'+categoryColors[i]+'">●</span> '+esc(c.category||'(Uncategorized)')+' · '+(100*c.count/total).toFixed(1)+'%</button>').join('')+'</div></div>';
+  }else{
+    const maxCat=categories[0]?.count||1;
+    $('chartCategories').innerHTML=categories.slice(0,14).map((c,i)=>
+      '<button class="bar" data-category="'+i+'" title="Filter by '+esc(c.category)+'">' +
+      '<span>'+esc(c.category||'(Uncategorized)')+'</span>' +
+      '<span class="track"><span class="fill" style="display:block;width:'+(100*c.count/maxCat)+'%"></span></span>' +
+      '<b>'+fmt(c.count)+'</b></button>'
+    ).join('');
+  }
+  document.querySelectorAll('#chartCategories [data-category]').forEach(b=>b.onclick=()=>{
+    const cat=categories[Number(b.dataset.category)]?.category;
+    if(!cat)return;
+    $('category').value=cat;apply();
+  });
+}
+$('categoryChartMode').onchange=renderCategoryChart;
+let personalPresets=[];
+async function refreshPersonalPresets(){
+  personalPresets=await api('user-presets');
+  const select=$('personalPresetSelect'), before=select.value;
+  select.replaceChildren(new Option('My saved presets…',''));
+  personalPresets.forEach(p=>select.add(new Option(p.Name,p.Name)));
+  if(personalPresets.some(p=>p.Name===before))select.value=before;
+}
+function selectedPersonalPreset(){return personalPresets.find(p=>p.Name===$('personalPresetSelect').value)}
+$('btnLoadPersonalPreset').onclick=()=>{
+  const preset=selectedPersonalPreset();if(!preset)return;
+  const available=new Set(allAvailableParams.map(p=>p.name.toLowerCase()));
+  const unavailable=preset.Columns.filter(c=>!available.has(c.toLowerCase()));
+  $('personalPresetCoverage').textContent=unavailable.length
+    ? unavailable.length+' preset column(s) have no populated values in this run: '+unavailable.slice(0,4).join(', ')
+    : 'All saved columns have populated values in this run.';
+  activeColumns=[...preset.Columns];renderColumnPills();load();
+};
+$('btnSavePersonalPreset').onclick=async()=>{
+  const name=prompt('Name this personal column preset', $('personalPresetSelect').value||'My columns');
+  if(name===null)return;
+  try{
+    const response=await fetch('api/user-presets',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,columns:activeColumns})});
+    const body=await response.json();if(!response.ok)throw Error(body.error||'Preset not saved');
+    await refreshPersonalPresets();$('personalPresetSelect').value=name.trim();
+  }catch(e){fail(e)}
+};
+$('btnDeletePersonalPreset').onclick=async()=>{
+  const preset=selectedPersonalPreset();if(!preset)return;
+  try{
+    const response=await fetch('api/user-presets',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:preset.Name,delete:true})});
+    const body=await response.json();if(!response.ok)throw Error(body.error||'Preset not deleted');
+    await refreshPersonalPresets();
+  }catch(e){fail(e)}
+};
+$('btnExportPersonalPreset').onclick=()=>{
+  const preset=selectedPersonalPreset();if(!preset)return;
+  const payload=JSON.stringify({schema:'RBDE-ColumnPreset-v1',name:preset.Name,columns:preset.Columns},null,2);
+  const u=URL.createObjectURL(new Blob([payload],{type:'application/json'}));
+  const a=document.createElement('a');a.href=u;a.download='rbde-column-preset.json';a.click();
+  setTimeout(()=>URL.revokeObjectURL(u),60000);
+};
+$('btnImportPersonalPreset').onclick=()=>$('personalPresetFile').click();
+$('personalPresetFile').onchange=async e=>{
+  const file=e.target.files?.[0];if(!file)return;
+  try{
+    if(file.size>8192)throw Error('Preset file exceeds 8 KB.');
+    const data=JSON.parse(await file.text());
+    if(data.schema!=='RBDE-ColumnPreset-v1'||typeof data.name!=='string'||!Array.isArray(data.columns))throw Error('Unsupported preset file.');
+    if(personalPresets.some(p=>p.Name.toLowerCase()===data.name.toLowerCase())&&!confirm('Replace saved preset '+data.name+'?'))return;
+    const response=await fetch('api/user-presets',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
+    const body=await response.json();if(!response.ok)throw Error(body.error||'Preset not imported');
+    await refreshPersonalPresets();$('personalPresetSelect').value=data.name;
+  }catch(error){fail(error)}finally{e.target.value=''}
+};
+refreshPersonalPresets().catch(fail);
 
 async function api(route,params){
   const response=await fetch('api/'+route+(params?'?'+params:''));
@@ -766,7 +884,7 @@ async function api(route,params){
 }
 
 function fail(e){
-  $('error').textContent=e.message+' - If the local dashboard server timed out, re-open the dashboard from APS Cloud Extractor.';
+  $('error').textContent=e.message||'The request failed.';
   $('error').classList.remove('hidden');
 }
 
@@ -789,17 +907,18 @@ function switchTab(tabName){
 function renderColumnPills(){
   const q = ($('colSearch').value || '').toLowerCase();
   const list = allAvailableParams.filter(p => !q || p.name.toLowerCase().includes(q));
-  $('colPills').innerHTML = list.map(p => {
+  $('colPills').innerHTML = list.slice(0,250).map(p => {
     const isChecked = activeColumns.some(c => c.toLowerCase() === p.name.toLowerCase());
     return '<label class="col-pill '+(isChecked?'checked':'')+'" title="Populated on '+fmt(p.elem_count)+' elements">' +
            '<input type="checkbox" data-colname="'+esc(p.name)+'" '+(isChecked?'checked':'')+'>' +
            '<span>'+esc(p.name)+'</span> <span class="muted">('+fmt(p.elem_count)+')</span></label>';
-  }).join('');
+  }).join('')+(list.length>250?'<span class="muted">Showing 250 of '+fmt(list.length)+' parameters. Search to narrow the list.</span>':'');
 
   document.querySelectorAll('[data-colname]').forEach(cb => {
     cb.onchange = () => {
       const col = cb.dataset.colname;
       if (cb.checked) {
+        if(activeColumns.length>=35){cb.checked=false;fail(Error('The table supports up to 35 dynamic columns.'));return}
         if (!activeColumns.some(c => c.toLowerCase() === col.toLowerCase())) activeColumns.push(col);
       } else {
         activeColumns = activeColumns.filter(c => c.toLowerCase() !== col.toLowerCase());
@@ -868,20 +987,8 @@ async function load(){
     $('exportPage').disabled=!rows.length;
     $('exportAll').disabled=!rows.length;
 
-    const maxCat=data.categories[0]?.count||1;
-    $('chartCategories').innerHTML=data.categories.map((c,i)=>
-      '<button class="bar" data-category="'+i+'" title="Filter by '+esc(c.category)+'">' +
-      '<span>'+esc(c.category||'(Uncategorized)')+'</span>' +
-      '<span class="track"><span class="fill" style="display:block;width:'+(100*c.count/maxCat)+'%"></span></span>' +
-      '<b>'+fmt(c.count)+'</b></button>'
-    ).join('')||'<p class="empty">No category data</p>';
-
-    document.querySelectorAll('[data-category]').forEach(b=>b.onclick=()=>{
-      const cat = data.categories[b.dataset.category]?.category;
-      if(!cat)return;
-      $('category').value=cat;
-      apply();
-    });
+    categoryDistribution=data.categories||[];
+    renderCategoryChart();
 
     const comp = data.completeness || [];
     $('chartCompleteness').innerHTML = comp.map(c =>
@@ -899,14 +1006,17 @@ async function load(){
     });
 
     const qto = data.qto || [];
-    const areaRow = qto.find(q => String(q.name).toLowerCase() === 'area');
-    const volRow = qto.find(q => String(q.name).toLowerCase() === 'volume');
+    const areaRows = qto.filter(q => String(q.name).toLowerCase() === 'area');
+    const volRows = qto.filter(q => String(q.name).toLowerCase() === 'volume');
+    // Never add measurements with different units into one headline quantity.
+    const areaRow = areaRows.length===1 ? areaRows[0] : null;
+    const volRow = volRows.length===1 ? volRows[0] : null;
 
-    $('qtoArea').textContent = areaRow ? fmtDec(areaRow.total_value) + (areaRow.unit ? ' ' + areaRow.unit : '') : '0.00';
-    $('qtoAreaSub').textContent = areaRow ? 'Across ' + fmt(areaRow.elem_count) + ' elements with Area' : 'No numeric Area in current filter';
+    $('qtoArea').textContent = areaRow ? fmtDec(areaRow.total_value) + (areaRow.unit ? ' ' + areaRow.unit : '') : areaRows.length ? 'Mixed units' : '—';
+    $('qtoAreaSub').textContent = areaRow ? 'Across ' + fmt(areaRow.elem_count) + ' elements with Area' : areaRows.length ? 'Inspect source units before summing' : 'No numeric Area in current filter';
 
-    $('qtoVolume').textContent = volRow ? fmtDec(volRow.total_value) + (volRow.unit ? ' ' + volRow.unit : '') : '0.00';
-    $('qtoVolumeSub').textContent = volRow ? 'Across ' + fmt(volRow.elem_count) + ' elements with Volume' : 'No numeric Volume in current filter';
+    $('qtoVolume').textContent = volRow ? fmtDec(volRow.total_value) + (volRow.unit ? ' ' + volRow.unit : '') : volRows.length ? 'Mixed units' : '—';
+    $('qtoVolumeSub').textContent = volRow ? 'Across ' + fmt(volRow.elem_count) + ' elements with Volume' : volRows.length ? 'Inspect source units before summing' : 'No numeric Volume in current filter';
 
     document.querySelectorAll('[data-element]').forEach(tr=>{
       tr.onclick=()=>{
@@ -1000,6 +1110,44 @@ async function loadValueDistribution(){
   } catch (e) { fail(e); }
 }
 
+let workflowIssue = null;
+async function openWorkflow(issue) {
+  workflowIssue=issue;
+  $('workflowIdentity').textContent = [base(issue.path),issue.unique_id,issue.rule_id,issue.parameter_name].join(' • ');
+  $('workflowStatus').textContent='Loading issue history…';
+  $('workflowDialog').showModal();
+  try {
+    const w=await api('issue-workflow',new URLSearchParams({model:issue.model_id,uid:issue.unique_id||String(issue.element_id),rule:issue.rule_id,parameter:issue.parameter_name}));
+    $('workflowAssignee').value=w.assignee;$('workflowDue').value=w.due_date;$('workflowComment').value=w.comment;
+    $('workflowSignoff').value=w.reviewer_signoff;$('workflowSignoff').disabled=w.status!=='Closed';
+    $('workflowStatus').textContent='Warehouse state: '+w.status+' • Sign-off requires a fixed issue verified by extraction.';
+  } catch(e) { $('workflowStatus').textContent=e.message; $('saveWorkflow').disabled=true; }
+}
+$('closeWorkflow').onclick=()=>{ $('workflowDialog').close(); $('saveWorkflow').disabled=false; };
+$('saveWorkflow').onclick=async()=>{
+  if(!workflowIssue)return;
+  $('saveWorkflow').disabled=true;
+  try {
+    const issue=workflowIssue;
+    const p=new URLSearchParams({model:issue.model_id,uid:issue.unique_id||String(issue.element_id),rule:issue.rule_id,parameter:issue.parameter_name});
+    const response=await fetch('api/issue-workflow?'+p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({actor:$('workflowActor').value,assignee:$('workflowAssignee').value,dueDate:$('workflowDue').value,comment:$('workflowComment').value,signoff:$('workflowSignoff').value})});
+    const body=await response.json();if(!response.ok)throw Error(body.error||'Save failed');
+    $('workflowStatus').textContent='Saved and recorded in issue_workflow_events.';
+  }catch(e){$('workflowStatus').textContent=e.message}finally{$('saveWorkflow').disabled=false}
+};
+$('btnFixedReview').onclick=async()=>{
+  $('fixedReviewPanel').classList.remove('hidden');
+  $('fixedReviewRows').textContent='Loading verified fixes…';
+  try {
+    const rows=await api('fixed-issues');
+    $('fixedReviewRows').innerHTML=rows.length?rows.map((r,i)=>'<button type="button" class="button" data-fixed="'+i+'" style="display:block;margin:7px 0;text-align:left;width:100%">'+esc(base(r.path))+' • '+esc(r.rule_id)+' • '+esc(r.parameter_name)+' • '+esc(r.assignee||'Unassigned')+' • '+esc(r.due_date||'No due date')+'</button>').join(''):'No fixed issues awaiting sign-off in this run.';
+    document.querySelectorAll('[data-fixed]').forEach(b=>b.onclick=()=>openWorkflow({...rows[Number(b.dataset.fixed)],element_id:0}));
+  } catch(e) { $('fixedReviewRows').textContent=e.message; }
+};
+$('btnExportBcf').onclick=()=>{
+  const model=$('issueModel').value;
+  const link=document.createElement('a');link.href='api/export-bcf'+(model?'?model='+encodeURIComponent(model):'');link.download='RBDE-Issues.bcfzip';link.click();
+};
 async function loadIssues(){
   try {
     const p = new URLSearchParams({
@@ -1031,7 +1179,7 @@ async function loadIssues(){
       '<td>'+esc(r.category)+'<br><span class="muted">'+esc(r.family)+' : '+esc(r.type_name)+'</span></td>' +
       '<td><b>'+esc(r.parameter_name)+'</b></td>' +
       '<td class="mono"><b>Actual:</b> '+esc(r.actual_value)+'<br><span class="muted"><b>Expected:</b> '+esc(r.expected_rule||'Required')+'</span></td>' +
-      '<td style="white-space:normal;max-width:340px">'+esc(r.message)+'</td>' +
+      '<td style="white-space:normal;max-width:340px">'+esc(r.message)+'<br><button type="button" class="button" data-workflow="'+r.issue_id+'">Assign / review</button></td>' +
       '</tr>'
     ).join('') || empty(8, 'All elements pass the selected rule specifications.');
 
@@ -1060,6 +1208,11 @@ async function loadIssues(){
         }
       };
       tr.ondblclick = () => showDetail(buildObj());
+    });
+    document.querySelectorAll('[data-workflow]').forEach(button => button.onclick = async ev => {
+      ev.stopPropagation();
+      const issue = currentIssueRows.find(x => String(x.issue_id) === button.dataset.workflow);
+      if (issue) await openWorkflow(issue);
     });
   } catch (e) { fail(e); }
 }
@@ -1155,16 +1308,16 @@ async function loadErrors(){
   }catch(e){fail(e);}
 }
 
-function exportRowsToCsv(dataset, filename){
+function csvLines(dataset, includeHeader=true){
   const headerNames=['ModelName','ModelId','ElementId','UniqueId','Kind','Category','Family','TypeName','ElementName',...activeColumns];
 
   const cell=v=>{
     let s=String(v??'');
-    if(/^[\s]*[=+@-]/.test(s)||/^[\t\r\n]/.test(s)) s="'"+s;
+    if((/^[\s]*[=+@-]/.test(s) && !/^\s*-\d+(\.\d+)?\s*$/.test(s))||/^[\t\r\n]/.test(s)) s="'"+s;
     return '"'+s.replaceAll('"','""')+'"';
   };
 
-  const lines = [headerNames.map(cell).join(',')];
+  const lines = includeHeader ? [headerNames.map(cell).join(',')] : [];
   for (const r of dataset) {
     const pMap = r.params || {};
     const coreVals = [base(r.path), r.model_id, r.element_id, r.unique_id, r.kind, r.category, r.family, r.type_name, r.name];
@@ -1176,12 +1329,20 @@ function exportRowsToCsv(dataset, filename){
     lines.push([...coreVals, ...dynVals].map(cell).join(','));
   }
 
-  const u=URL.createObjectURL(new Blob(['\ufeff'+lines.join('\r\n')],{type:'text/csv;charset=utf-8'}));
+  return lines.join('\r\n');
+}
+
+function downloadCsv(parts, filename){
+  const u=URL.createObjectURL(new Blob(parts,{type:'text/csv;charset=utf-8'}));
   const a=document.createElement('a');
   a.href=u;
   a.download=filename;
   a.click();
-  setTimeout(()=>URL.revokeObjectURL(u),1000);
+  setTimeout(()=>URL.revokeObjectURL(u),60000);
+}
+
+function exportRowsToCsv(dataset, filename){
+  downloadCsv(['\ufeff',csvLines(dataset)], filename);
 }
 
 document.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>switchTab(b.dataset.tab));
@@ -1216,6 +1377,45 @@ let currentViewerDoc = null;
 let viewableNodesList = [];
 let selected3DElementRecord = null;
 let sectionBoxActive = false;
+const federation = new Map(); // Viewer model.id -> batch model_id; dbId is only unique inside one Viewer model.
+const overlayModels = new Map(); // batch model_id -> Viewer model
+let viewerLoadGeneration = 0;
+function modelForBatchId(modelId) {
+  for (const [viewerModel, batchId] of federation) if (String(batchId) === String(modelId)) return viewerModel;
+  return null;
+}
+function updateOverlayCount() {
+  $('overlayCount').textContent = (federation.size || 1) + ' model(s) loaded';
+  $('btnClearOverlays').disabled = overlayModels.size === 0;
+}
+function clearOverlays() {
+  if (apsViewer) for (const model of overlayModels.values()) apsViewer.unloadModel(model);
+  for (const model of overlayModels.values()) federation.delete(model);
+  overlayModels.clear(); updateOverlayCount();
+}
+async function addOverlay(modelId) {
+  if (!modelId) return;
+  if (!apsViewer?.model) throw new Error('Load the primary model first.');
+  if (String(modelId) === String(loadedViewerModelId)) throw new Error('Select a different model.');
+  if (overlayModels.has(String(modelId))) return;
+  if (overlayModels.size >= 7) throw new Error('Maximum 8 models in one view. Clear overlays to free memory.');
+  const selected = (overview?.models || []).find(m => String(m.model_id) === String(modelId));
+  if (!selected?.derivative_urn) throw new Error('Selected model has no published derivative URN.');
+  if (apsViewer.model.is2d()) throw new Error('Switch primary view to 3D before adding an overlay.');
+  const primary = modelForBatchId(loadedViewerModelId) || apsViewer.model;
+  const generation = viewerLoadGeneration;
+  const urn = selected.derivative_urn;
+  $('viewerStatusText').textContent = 'Loading overlay: ' + base(selected.path) + '…';
+  const doc = await new Promise((resolve,reject) => Autodesk.Viewing.Document.load(urn.startsWith('urn:') ? urn : 'urn:'+urn,resolve,(code,msg)=>reject(new Error('Overlay manifest '+code+': '+msg))));
+  const root = doc.getRoot();
+  const node = (root.search({type:'geometry',role:'3d'}) || [])[0] || (root.search({type:'geometry'}) || []).find(n => n.data?.role === '3d');
+  if (!node) throw new Error('Overlay has no published 3D view.');
+  // Autodesk recommends inheriting the first model's live offset by value.
+  const model = await apsViewer.loadDocumentNode(doc,node,{keepCurrentModels:true,preserveView:true,globalOffset:primary.getGlobalOffset().clone()});
+  if (generation !== viewerLoadGeneration) { apsViewer.unloadModel(model); return; }
+  overlayModels.set(String(modelId),model); federation.set(model,String(modelId)); updateOverlayCount();
+  $('viewerStatusText').textContent = 'Overlay loaded: '+base(selected.path)+' • Check shared coordinates before using spatial comparisons.';
+}
 
 function ensureViewerInitialized() {
   return new Promise((resolve, reject) => {
@@ -1262,7 +1462,7 @@ function ensureViewerInitialized() {
       apsViewer.setEnvMapBackground(false);
       apsViewer.setLightPreset(1);
 
-      apsViewer.addEventListener(Autodesk.Viewing.SELECTION_CHANGED_EVENT, onViewer3DSelectionChanged);
+      apsViewer.addEventListener(Autodesk.Viewing.AGGREGATE_SELECTION_CHANGED_EVENT, onViewer3DSelectionChanged);
 
       // Smooth ResizeObserver so dragging the viewport corner resizes WebGL immediately
       if (typeof ResizeObserver !== 'undefined') {
@@ -1299,6 +1499,8 @@ async function load3DModelByModelId(modelId) {
 
   $('viewerStatusText').textContent = 'Streaming lightweight SVF2 mesh & 2D sheets for ' + base(mObj.path) + '...';
   const viewer = await ensureViewerInitialized();
+  viewerLoadGeneration++;
+  clearOverlays(); federation.clear();
 
   return new Promise((resolve, reject) => {
     const docId = urn.startsWith('urn:') ? urn : 'urn:' + urn;
@@ -1323,9 +1525,10 @@ async function load3DModelByModelId(modelId) {
         });
 
         const nodeToLoad = defaultNode || geomNodes[0];
-        viewer.loadDocumentNode(viewerDoc, nodeToLoad).then(() => {
+        viewer.loadDocumentNode(viewerDoc, nodeToLoad).then((loadedModel) => {
           loadedViewerUrn = urn;
           loadedViewerModelId = mObj.model_id;
+          federation.set(loadedModel,String(mObj.model_id)); updateOverlayCount();
           $('viewerStatusText').textContent = 'Loaded SVF2: ' + base(mObj.path) + ' (' + geomNodes.length + ' 3D/2D views available)';
           resolve();
         });
@@ -1338,10 +1541,10 @@ async function load3DModelByModelId(modelId) {
   });
 }
 
-function getElementWorldBoundingBox(dbId) {
-  if (!apsViewer || !apsViewer.model || typeof THREE === 'undefined') return null;
-  const tree = apsViewer.model.getInstanceTree();
-  const fragList = apsViewer.model.getFragmentList();
+function getElementWorldBoundingBox(dbId, viewerModel = apsViewer?.model) {
+  if (!viewerModel || typeof THREE === 'undefined') return null;
+  const tree = viewerModel.getInstanceTree();
+  const fragList = viewerModel.getFragmentList();
   if (!tree || !fragList) return null;
 
   const totalBox = new THREE.Box3();
@@ -1354,19 +1557,19 @@ function getElementWorldBoundingBox(dbId) {
   return totalBox.isEmpty() ? null : totalBox;
 }
 
-function getCombinedWorldBoundingBox(dbIds) {
+function getCombinedWorldBoundingBox(dbIds, viewerModel = apsViewer?.model) {
   if (typeof THREE === 'undefined') return null;
   const combined = new THREE.Box3();
   for (const id of dbIds) {
-    const b = getElementWorldBoundingBox(id);
+    const b = getElementWorldBoundingBox(id,viewerModel);
     if (b) combined.union(b);
   }
   return combined.isEmpty() ? null : combined;
 }
 
-async function applySectionBoxToDbIds(dbIds, padMeters = 1.2) {
+async function applySectionBoxToDbIds(dbIds, padMeters = 1.2, viewerModel = apsViewer?.model) {
   if (!apsViewer || !apsViewer.model || !dbIds.length) return;
-  const box = getCombinedWorldBoundingBox(dbIds);
+  const box = getCombinedWorldBoundingBox(dbIds,viewerModel);
   if (!box) return;
 
   box.expandByScalar(padMeters);
@@ -1375,11 +1578,12 @@ async function applySectionBoxToDbIds(dbIds, padMeters = 1.2) {
     secExt.setSectionBox(box);
     sectionBoxActive = true;
   }
-  apsViewer.fitToView(dbIds);
+  apsViewer.fitToView(dbIds,viewerModel);
 }
 
 async function onViewer3DSelectionChanged(ev) {
-  const dbIds = ev.dbIdArray || [];
+  const selection = (ev.selections || []).find(s => s.dbIdArray?.length);
+  const dbIds = selection?.dbIdArray || [];
   if (!dbIds.length || !apsViewer) {
     selected3DElementRecord = null;
     $('viewerSelectedInfo').textContent = 'Click any object in 3D or click any row in the tables below to sync selection & zoom camera.';
@@ -1390,18 +1594,20 @@ async function onViewer3DSelectionChanged(ev) {
   }
 
   const dbId = dbIds[0];
-  const mId = loadedViewerModelId || $('viewerModelSelect').value || 1;
+  const selectedModel = selection.model;
+  const mId = federation.get(selectedModel);
+  if (!mId) { $('viewerSelectedInfo').textContent = 'Selected object is not mapped to a batch model.'; return; }
   $('btnIsolateSelected3D').disabled = false;
 
   let parsedRevitId = 0;
-  const tree = apsViewer.model?.getInstanceTree();
+  const tree = selectedModel?.getInstanceTree();
   if (tree) {
     const nodeName = tree.getNodeName(dbId) || '';
     const m = nodeName.match(/\[(\d+)\]\s*$/);
     if (m) parsedRevitId = Number(m[1]);
   }
 
-  const wBox = getElementWorldBoundingBox(dbId);
+  const wBox = getElementWorldBoundingBox(dbId,selectedModel);
   const coordStr = wBox
     ? 'XYZ(' + wBox.min.x.toFixed(1) + ', ' + wBox.min.y.toFixed(1) + ', ' + wBox.min.z.toFixed(1) + ')'
     : '';
@@ -1437,9 +1643,9 @@ async function zoomAndIsolateIn3D(modelId, objectId, revitElementId, rowRecord) 
     let targetDbId = Number(objectId || 0);
 
     if (targetDbId > 0) {
-      apsViewer.isolate([targetDbId]);
-      apsViewer.select([targetDbId]);
-      apsViewer.fitToView([targetDbId]);
+      const targetModel = modelForBatchId(modelId) || apsViewer.model;
+      apsViewer.setAggregateSelection([{model:targetModel,ids:[targetDbId]}]);
+      apsViewer.fitToView([targetDbId],targetModel);
       if (rowRecord) {
         rowRecord.object_id = targetDbId;
         selected3DElementRecord = rowRecord;
@@ -1456,9 +1662,9 @@ async function zoomAndIsolateIn3D(modelId, objectId, revitElementId, rowRecord) 
     if (revitElementId) {
       apsViewer.search(String(revitElementId), (foundIds) => {
         if (foundIds && foundIds.length > 0) {
-          apsViewer.isolate(foundIds);
-          apsViewer.select(foundIds);
-          apsViewer.fitToView(foundIds);
+          const targetModel = modelForBatchId(modelId) || apsViewer.model;
+          apsViewer.setAggregateSelection([{model:targetModel,ids:foundIds}]);
+          apsViewer.fitToView(foundIds,targetModel);
         }
       }, () => {}, ['name']);
     }
@@ -1468,8 +1674,10 @@ async function zoomAndIsolateIn3D(modelId, objectId, revitElementId, rowRecord) 
 }
 
 async function load3DModelByIdOrDefault(modelId) {
-  const targetId = modelId || $('viewerModelSelect').value || (overview?.models?.[0]?.model_id);
-  if (targetId) await load3DModelByModelId(targetId);
+  const viewable=(overview?.models||[]).filter(m=>m.status!=='failed'&&m.derivative_urn);
+  const requested=viewable.find(m=>String(m.model_id)===String(modelId));
+  const targetId=requested?.model_id||$('viewerModelSelect').value||viewable[0]?.model_id;
+  if (targetId && !modelForBatchId(targetId)) await load3DModelByModelId(targetId);
 }
 
 async function apply3DHeatmap(mode) {
@@ -1857,14 +2065,23 @@ $('btnToggle3DViewer').onclick = async () => {
 };
 
 $('viewerModelSelect').onchange = () => load3DModelByModelId($('viewerModelSelect').value);
+$('btnAddOverlay').onclick = async () => {
+  $('btnAddOverlay').disabled = true;
+  try { await addOverlay($('overlayModelSelect').value); }
+  catch (e) { $('viewerStatusText').textContent = e.message; }
+  finally { $('btnAddOverlay').disabled = false; }
+};
+$('btnClearOverlays').onclick = () => { clearOverlays(); $('viewerStatusText').textContent = 'Overlays removed.'; };
 
 $('viewerViewableSelect').onchange = () => {
   if (!apsViewer || !currentViewerDoc) return;
+  clearOverlays(); federation.clear();
   const idx = Number($('viewerViewableSelect').value || 0);
   const targetNode = viewableNodesList[idx];
   if (targetNode) {
     $('viewerStatusText').textContent = 'Loading view/sheet: ' + (targetNode.data?.name || '') + '...';
-    apsViewer.loadDocumentNode(currentViewerDoc, targetNode).then(() => {
+    apsViewer.loadDocumentNode(currentViewerDoc, targetNode).then((loadedModel) => {
+      federation.set(loadedModel,String(loadedViewerModelId)); updateOverlayCount();
       $('viewerStatusText').textContent = 'Active View/Sheet: ' + (targetNode.data?.name || '');
     });
   }
@@ -1927,10 +2144,10 @@ $('btnToggleSectionBox').onclick = async () => {
   if (!apsViewer) return;
   const secExt = await apsViewer.loadExtension('Autodesk.Section');
   if (!secExt) return;
-  const sel = apsViewer.getSelection() || [];
-  if (sel.length > 0) {
-    await applySectionBoxToDbIds(sel, 1.5);
-    $('viewerStatusText').textContent = 'Applied 3D Section Box around ' + sel.length + ' selected element(s).';
+  const selection = (apsViewer.getAggregateSelection() || []).find(s => s.selection?.length);
+  if (selection) {
+    await applySectionBoxToDbIds(selection.selection, 1.5, selection.model);
+    $('viewerStatusText').textContent = 'Applied 3D Section Box around ' + selection.selection.length + ' selected element(s).';
   } else {
     sectionBoxActive = !sectionBoxActive;
     if (sectionBoxActive) secExt.activate('box');
@@ -1941,10 +2158,10 @@ $('btnToggleSectionBox').onclick = async () => {
 
 $('btnIsolateSelected3D').onclick = async () => {
   if (!apsViewer) return;
-  const sel = apsViewer.getSelection() || [];
-  if (!sel.length) return;
-  apsViewer.isolate(sel);
-  await applySectionBoxToDbIds(sel, 1.5);
+  const selection = (apsViewer.getAggregateSelection() || []).find(s => s.selection?.length);
+  if (!selection) return;
+  apsViewer.isolate(selection.selection,selection.model);
+  await applySectionBoxToDbIds(selection.selection, 1.5, selection.model);
   $('viewerStatusText').textContent = 'Isolated and sectioned selected element(s).';
 };
 
@@ -1992,17 +2209,18 @@ async function openSheetSetModal() {
     return;
   }
 
-  $('sheetSetSummaryText').textContent = 'Querying Autodesk Cloud Manifest for 2D Sheets, 3D Views & Native Vector PDFs (' + modelObj.model_name + ')...';
+  const modelLabel=base(modelObj.path||modelObj.model_name||'ACC model');
+  $('sheetSetSummaryText').textContent = 'Querying Autodesk Cloud Manifest for 2D Sheets, 3D Views & Native Vector PDFs (' + modelLabel + ')...';
   $('sheetSetRows').innerHTML = '<tr><td colspan="5" class="muted">Loading manifest from Autodesk Model Derivative...</td></tr>';
 
   try {
     const manifest = await api('model-sheets', new URLSearchParams({ urn: modelObj.derivative_urn }));
-    currentManifestData = { ...manifest, modelName: modelObj.model_name };
+    currentManifestData = { ...manifest, modelName: modelLabel };
     const allItems = [...(manifest.sheets2d || []), ...(manifest.views3d || [])];
     const nativePdfCount = allItems.filter(s => s.hasNativePdf).length;
 
     $('sheetSetSummaryText').textContent =
-      `Model: ${modelObj.model_name} | 2D Drawing Sheets: ${(manifest.sheets2d || []).length} | 3D Views: ${(manifest.views3d || []).length} | Native Cloud Vector PDFs: ${nativePdfCount}`;
+      `Model: ${modelLabel} | 2D Drawing Sheets: ${(manifest.sheets2d || []).length} | 3D Views: ${(manifest.views3d || []).length} | Native Cloud Vector PDFs: ${nativePdfCount}`;
 
     if (!allItems.length) {
       $('sheetSetRows').innerHTML = '<tr><td colspan="5" class="muted">No 2D sheets or 3D views found in the published manifest.</td></tr>';
@@ -2358,37 +2576,48 @@ $('iprev').onclick = () => { ipage--; loadIssues(); };
 $('inext').onclick = () => { ipage++; loadIssues(); };
 
 $('btnExportIssuesCsv').onclick = async () => {
+  const issues = await fetchAllFilteredIssues();
+  const cell=v=>{
+    let s=String(v??'');
+    if(/^[\s]*[=+@-]/.test(s) && !/^\s*-\d+(\.\d+)?\s*$/.test(s))s="'"+s;
+    return '"'+s.replaceAll('"','""')+'"';
+  };
+  const hdr = ['Discipline','Severity','RuleId','RequirementId','Model','ElementId','UniqueId','Category','Family','TypeName','Parameter','ActualValue','Message'];
+  const lines = [hdr.join(','), ...issues.map(r=>[r.discipline,r.severity,r.rule_id,r.requirement_id,base(r.path),r.element_id,r.unique_id,r.category,r.family,r.type_name,r.parameter_name,r.actual_value,r.message].map(cell).join(','))];
+  downloadCsv(['\ufeff',lines.join('\r\n')],'ids-issues-'+($('issueTeam').value||'ALL')+'.csv');
+};
+
+async function fetchAllFilteredIssues(){
   const p = new URLSearchParams({
     discipline: $('issueTeam').value,
+    lifecycle: $('issueLifecycle').value,
+    evalStatus: $('issueEvalStatus').value,
     severity: $('issueSeverity').value,
     rule: $('issueRule').value,
     model: $('issueModel').value,
-    limit: 5000
+    limit: 1000
   });
-  const d = await api('issues', p);
-  const cell=v=>'"'+String(v??'').replaceAll('"','""')+'"';
-  const hdr = ['Discipline','Severity','RuleId','RequirementId','Model','ElementId','UniqueId','Category','Family','TypeName','Parameter','ActualValue','Message'];
-  const lines = [hdr.join(','), ...(d.rows||[]).map(r=>[r.discipline,r.severity,r.rule_id,r.requirement_id,base(r.path),r.element_id,r.unique_id,r.category,r.family,r.type_name,r.parameter_name,r.actual_value,r.message].map(cell).join(','))];
-  const u=URL.createObjectURL(new Blob(['\ufeff'+lines.join('\r\n')],{type:'text/csv;charset=utf-8'}));
-  const a=document.createElement('a'); a.href=u; a.download='ids-issues-'+($('issueTeam').value||'ALL')+'.csv'; a.click();
-};
+  const all=[];
+  for(let page=0;;page++){
+    p.set('page',page);
+    const d=await api('issues',p);
+    const batch=d.rows||[];
+    all.push(...batch);
+    if(all.length>=Number(d.total||0))break;
+    if(!batch.length)throw Error('Issue export stopped before all rows were returned.');
+  }
+  return all;
+}
 
 $('btnExportFixJson').onclick = async () => {
   const team = $('issueTeam').value || 'ALL';
-  const p = new URLSearchParams({
-    discipline: $('issueTeam').value,
-    severity: $('issueSeverity').value,
-    rule: $('issueRule').value,
-    model: $('issueModel').value,
-    limit: 5000
-  });
-  const d = await api('issues', p);
+  const issues = await fetchAllFilteredIssues();
   const payload = JSON.stringify({
     schema: 'RBDE-RevitFixPackage-v1',
     teamCode: team,
     exportedUtc: new Date().toISOString(),
-    issueCount: (d.rows||[]).length,
-    issues: d.rows || []
+    issueCount: issues.length,
+    issues
   }, null, 2);
   const u=URL.createObjectURL(new Blob([payload],{type:'application/json'}));
   const a=document.createElement('a'); a.href=u; a.download='revit-fix-package-'+team+'.json'; a.click();
@@ -2414,11 +2643,22 @@ $('exportAll').onclick=async()=>{
   $('exportAll').textContent = 'Preparing Wide CSV...';
   try {
     const p = new URLSearchParams(applied);
-    p.set('page', 0);
-    p.set('limit', 10000);
+    p.set('limit', 1000);
     p.set('columns', activeColumns.join(','));
-    const data = await api('elements', p);
-    exportRowsToCsv(data.rows || [], 'elements-wide-filtered.csv');
+    const parts=['\ufeff'];
+    let exported=0, expected=null, currentPage=0;
+    // Page through the same filtered query; a single API request may contain at most 10,000 rows.
+    do {
+      p.set('page', currentPage++);
+      const data=await api('elements',p);
+      const batch=data.rows||[];
+      expected=Number(data.total?.[0]?.count||0);
+      if(!batch.length && exported<expected)throw Error('Export stopped before all rows were returned.');
+      parts.push(csvLines(batch,exported===0),'\r\n');
+      exported+=batch.length;
+      $('exportAll').textContent='Preparing Wide CSV... '+fmt(exported)+' / '+fmt(expected);
+    } while(exported<expected);
+    downloadCsv(parts,'elements-wide-filtered.csv');
   } catch (e) {
     fail(e);
   } finally {
@@ -2432,14 +2672,15 @@ $('exportAll').onclick=async()=>{
     overview=await api('overview');
     $('run').textContent='Batch Run: '+overview.run;
     $('modelsCount').textContent=fmt(overview.models.length);
-    const ok=overview.models.filter(m=>m.status==='succeeded').length;
-    $('successCount').textContent=fmt(ok)+' succeeded | '+fmt(overview.models.length-ok)+' with issues';
+    const incompleteModels=overview.models.filter(m=>m.status!=='succeeded'||Number(m.error_count||0)>0);
+    $('successCount').textContent=fmt(overview.models.length-incompleteModels.length)+' succeeded | '+fmt(incompleteModels.length)+' incomplete';
     $('instancesCount').textContent=fmt(overview.totals.find(t=>t.kind==='instance')?.count||0);
     $('typesCount').textContent=fmt(overview.totals.find(t=>t.kind==='type')?.count||0)+' Type records extracted';
 
     // Coverage banner
     const viewList = overview.models.map(m => base(m.path) + ' [' + (m.view_name || '{3D}') + ']').join(', ');
-    $('coverageText').textContent = 'Extracted View Scope: ' + (viewList || '3D View');
+    $('coverageSummary').textContent='Extracted view scope: '+fmt(overview.models.length)+' models · '+fmt(incompleteModels.length)+' incomplete · Show model/view list';
+    $('coverageText').textContent = viewList || 'No models in this run.';
 
     // IDS Issue Summary & Delivery Readiness Banner
     const issSum = overview.issueSummary || [];
@@ -2451,24 +2692,32 @@ $('exportAll').onclick=async()=>{
       byTeam[x.discipline] = (byTeam[x.discipline] || 0) + Number(x.count || 0);
     }
     const teamParts = Object.entries(byTeam).map(([k,v]) => k + ': ' + fmt(v));
-    $('issuesTeamSub').textContent = teamParts.length ? teamParts.join(' | ') : '0 issues (All rules passed)';
+    $('issuesTeamSub').textContent = teamParts.length ? teamParts.join(' | ') : 'No rule issues recorded';
 
     const cs = overview.confidenceSummary || {};
-    const totalChecks = Number(cs.total_checks || 0);
+    const totalChecks = Number(cs.applicable_checks || 0);
     const evalChecks = Number(cs.evaluated_checks || 0);
     const notEvalChecks = Number(cs.not_evaluated_checks || 0);
-    const confPct = cs.confidence_pct !== undefined ? cs.confidence_pct : 100;
+    const confPct = totalChecks>0 ? Math.round(1000*evalChecks/totalChecks)/10 : null;
     const fixedCnt = Number(cs.fixed_issues || 0);
     const newCnt = Number(cs.new_issues || 0);
     const regCnt = Number(cs.regressed_issues || 0);
 
-    const isReady = highIss === 0 && notEvalChecks === 0;
+    const reasons=[];
+    if(!overview.models.length)reasons.push('No models extracted');
+    if(incompleteModels.length)reasons.push(fmt(incompleteModels.length)+' incomplete model(s)');
+    if(totalChecks===0)reasons.push('No rules evaluated');
+    if(totalChecks>0 && evalChecks<totalChecks && !notEvalChecks)reasons.push('Rule coverage incomplete');
+    if(notEvalChecks)reasons.push(fmt(notEvalChecks)+' checks not evaluated');
+    if(highIss)reasons.push(fmt(highIss)+' high-severity issue(s)');
+    if(totalIss && !highIss)reasons.push(fmt(totalIss)+' issue(s) for review');
+    const isReady = reasons.length===0;
     $('readinessBanner').classList.toggle('ready', isReady);
     $('readinessTitle').textContent = isReady
-      ? 'Delivery Readiness: READY FOR SUBMISSION (0 High-Severity Blocking Issues)'
-      : 'Delivery Readiness: NOT READY (' + fmt(highIss) + ' High-Severity Blocking Issues | ' + fmt(totalIss) + ' Total Open)';
+      ? 'Delivery Readiness: READY FOR REVIEW (all models extracted, checks evaluated, no issues)'
+      : 'Delivery Readiness: REVIEW REQUIRED — '+reasons.join(' · ');
 
-    $('confidenceMetric').innerHTML = '<b>Data Confidence:</b> Evaluated ' + fmt(evalChecks) + ' / ' + fmt(totalChecks) + ' checks (' + confPct + '%) | ' + fmt(notEvalChecks) + ' Not Evaluated';
+    $('confidenceMetric').innerHTML = '<b>Rule Coverage:</b> '+(confPct===null?'Not assessed (0 applicable checks)':'Evaluated ' + fmt(evalChecks) + ' / ' + fmt(totalChecks) + ' checks (' + confPct + '%) | ' + fmt(notEvalChecks) + ' Not Evaluated');
     $('lifecycleMetric').innerHTML = '<b>Lifecycle Delta:</b> Fixed: ' + fmt(fixedCnt) + ' | New: ' + fmt(newCnt) + ' | Regressed: ' + fmt(regCnt);
 
     const dSum = overview.diffSummary || [];
@@ -2478,7 +2727,7 @@ $('exportAll').onclick=async()=>{
     // History table
     const hRuns = overview.historyRuns || [];
     $('historyRows').innerHTML = hRuns.map(hr =>
-      '<tr><td class="mono"><b>'+esc(hr.run_id)+'</b></td><td>'+esc(hr.project_name)+'</td><td>'+esc(hr.started_utc)+'</td><td>'+fmt(hr.model_count)+'</td><td>'+fmt(hr.element_count)+'</td><td><b>'+(hr.confidence_pct!==undefined&&hr.confidence_pct!==null?hr.confidence_pct+'%':'100%')+'</b></td><td><b>'+fmt(hr.issue_count)+'</b> <span class="muted">(New: '+fmt(hr.new_issue_count||0)+' / Fixed: '+fmt(hr.fixed_issue_count||0)+' / Regressed: '+fmt(hr.regressed_issue_count||0)+')</span></td></tr>'
+      '<tr><td class="mono"><b>'+esc(hr.run_id)+'</b></td><td>'+esc(hr.project_name)+'</td><td>'+esc(hr.started_utc)+'</td><td>'+fmt(hr.model_count)+'</td><td>'+fmt(hr.element_count)+'</td><td><b>'+(hr.confidence_pct!==undefined&&hr.confidence_pct!==null?hr.confidence_pct+'%':'—')+'</b></td><td><b>'+fmt(hr.issue_count)+'</b> <span class="muted">(New: '+fmt(hr.new_issue_count||0)+' / Fixed: '+fmt(hr.fixed_issue_count||0)+' / Regressed: '+fmt(hr.regressed_issue_count||0)+')</span></td></tr>'
     ).join('') || empty(7, 'No prior runs recorded in warehouse.sqlite yet.');
 
     allAvailableParams = overview.availableParameters || [];
@@ -2495,8 +2744,17 @@ $('exportAll').onclick=async()=>{
     renderColumnPills();
 
     for(const m of overview.models){
-      for(const id of ['model','errorModel','issueModel','viewerModelSelect'])
+      for(const id of ['model','errorModel','issueModel'])
         $(id).add(new Option(base(m.path)+' (ID '+m.model_id+')',m.model_id));
+      if(m.status!=='failed'&&m.derivative_urn){
+        for(const id of ['viewerModelSelect','overlayModelSelect'])
+          $(id).add(new Option(base(m.path)+' (ID '+m.model_id+')',m.model_id));
+      }
+    }
+    const has3DModels=$('viewerModelSelect').options.length>0;
+    for(const id of ['btnToggle3DViewer','btnHeaderSheetSet','btnOpenSheetSetModal']){
+      $(id).disabled=!has3DModels;
+      if(!has3DModels)$(id).title='No published 2D/3D derivative in this run. Extract an ACC model with a published view first.';
     }
     for(const c of overview.categories)
       if(c.category) $('category').add(new Option(c.category,c.category));
@@ -2511,15 +2769,22 @@ $('exportAll').onclick=async()=>{
     $('models').innerHTML=overview.models.map(m=>{
       const d = Number(m.delta_elements || 0);
       const dStr = d > 0 ? ' (+'+fmt(d)+')' : (d < 0 ? ' ('+fmt(d)+')' : '');
+      const errors=Number(m.error_count||0);
       return '<tr class="selectable" tabindex="0" data-model="'+m.model_id+'">' +
-        '<td title="'+esc(m.path)+'">'+esc(base(m.path))+'</td>' +
-        '<td><span class="mono muted">'+esc(m.view_name||'{3D}')+'</span></td>' +
+        '<td title="'+esc(m.path)+'">'+esc(base(m.path))+'<br><span class="mono muted">'+esc(m.view_name||'{3D}')+'</span></td>' +
+        '<td>'+badge(m.status)+(errors?'<br><button class="chip-btn" data-error-model="'+m.model_id+'">'+fmt(errors)+' error(s) →</button>':'')+'</td>'+
         '<td>'+fmt(m.element_count)+'<span class="muted">'+esc(dStr)+'</span></td></tr>';
     }).join('');
 
     document.querySelectorAll('[data-model]').forEach(tr=>{
       tr.onclick=()=>{$('model').value=tr.dataset.model;apply()};
       tr.onkeydown=e=>{if(e.key==='Enter')tr.click()};
+    });
+    document.querySelectorAll('[data-error-model]').forEach(button=>button.onclick=e=>{
+      e.stopPropagation();
+      $('errorModel').value=button.dataset.errorModel;
+      epage=0;
+      switchTab('errors');
     });
 
     await load();

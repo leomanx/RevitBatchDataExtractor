@@ -4,6 +4,7 @@
 bin/
 output/
 test-output/
+tmp/
 cloud/dist/
 batch.json
 

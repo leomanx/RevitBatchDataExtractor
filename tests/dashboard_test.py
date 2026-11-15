@@ -1,5 +1,5 @@
 """End-to-end local HTTP/SQLite checks; creates an explicitly synthetic demo."""
-import json, pathlib, sqlite3, subprocess, urllib.request, urllib.parse
+import json, os, pathlib, sqlite3, subprocess, urllib.request, urllib.parse
 root = pathlib.Path(__file__).resolve().parents[1]
 folder = root / 'test-output' / 'DEMO-synthetic-35-models'
 folder.mkdir(parents=True, exist_ok=True)
@@ -24,8 +24,15 @@ with sqlite3.connect(database) as db:
             db.execute('INSERT INTO elements VALUES(?,?,?,?,?,?,?,?,?,?)',(m,e,f'demo-{m}-{e}','type' if e>68 else 'instance','-1',category,family,type_name,900+e%6,'ทดสอบ '+str(e)))
             for scope,key,name,value in [('instance','builtin:ALL_MODEL_MARK','Mark','' if e%7==0 else f'A-{m:02}-{e:03}'),('type','id:123','Fire Rating','60 min' if e%3==0 else '90 min'),('instance','id:456','Comments','</script><img src=x onerror=alert(1)>' if e==1 else 'ตรวจสอบพื้นที่')]:
                 db.execute('INSERT INTO parameters VALUES(?,?,?,?,?,?,?,?,?,?)',(m,e,scope,key,name,'String',int(bool(value)),value,value,''))
+            if m==1 and e in (1,2):
+                unit='m²' if e==1 else 'ft²'
+                db.execute('INSERT INTO parameters VALUES(?,?,?,?,?,?,?,?,?,?)',(m,e,'instance','id:area','Area','Double',1,str(e*10),str(e*10)+' '+unit,unit))
+                if e==1:
+                    db.execute('INSERT INTO parameters VALUES(?,?,?,?,?,?,?,?,?,?)',(m,e,'type','id:type-area','Area','Double',1,'999','999 '+unit,unit))
 exe=root/'src/Dashboard/bin/Release/net8.0/RBDE.Dashboard.exe'
-process=subprocess.Popen([str(exe),str(database),'--no-browser'],stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+binary=os.environ.get('RBDE_DASHBOARD_BINARY')
+command=['dotnet',binary] if binary and binary.endswith('.dll') else [binary or str(exe)]
+process=subprocess.Popen([*command,str(database),'--no-browser'],stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
 try:
     url=process.stdout.readline().strip()
     assert url.startswith('http://localhost:'),url
@@ -40,11 +47,13 @@ try:
     data=get('elements',model=1,parameter='Fire Rating',scope='instance',value='60'); assert data['total'][0]['count']==0
     assert get('elements',family="' OR 1=1 --")['total'][0]['count']==0
     assert get('elements',parameter='not-exported',missing=1,model=1)['total'][0]['count']==72
-    assert len(get('detail',model=1,element=1))==3
+    assert len(get('detail',model=1,element=1))==5
+    area=get('elements',model=1)['qto']
+    assert sorted((r['unit'],r['total_value']) for r in area if r['name']=='Area')==[('ft²',20.0),('m²',10.0)]
     assert get('errors',model=9)['total'][0]['count']==1
     assert len(get('errors')['rows'])==5
     with urllib.request.urlopen(url) as response:
-        html=response.read().decode(); assert 'Element explorer' in html and 'Content-Security-Policy' in response.headers
+        html=response.read().decode(); assert 'Element Explorer' in html and 'Content-Security-Policy' in response.headers
     try: urllib.request.urlopen(url.split('/'+url.split('/')[-2])[0]+'/api/overview'); raise AssertionError('Token bypass')
     except urllib.error.HTTPError as e: assert e.code==404
     print('PASS: 14 dashboard integration checks (summary, paging, filters, missing values, scope, SQL injection, details, errors, HTML, token).')

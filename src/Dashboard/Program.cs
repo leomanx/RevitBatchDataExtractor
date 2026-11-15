@@ -10,6 +10,7 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.Data.Sqlite;
 using RBDE.Dashboard;
+using BatchExtractor;
 
 HttpClient viewerHttp = new() { Timeout = TimeSpan.FromSeconds(30) };
 string? cachedViewerToken = null;
@@ -143,7 +144,7 @@ while (listener.IsListening)
     lastRequest = DateTime.UtcNow;
     try
     {
-        if (context.Request.HttpMethod != "GET" || !context.Request.Url!.AbsolutePath.StartsWith('/' + token + '/', StringComparison.Ordinal))
+        if (context.Request.HttpMethod is not ("GET" or "POST") || !context.Request.Url!.AbsolutePath.StartsWith('/' + token + '/', StringComparison.Ordinal))
         {
             context.Response.StatusCode = 404;
             context.Response.Close();
@@ -164,9 +165,89 @@ while (listener.IsListening)
             "frame-ancestors 'none'";
 
         var route = context.Request.Url.AbsolutePath[('/' + token + '/').Length..];
-        if (route == "")
+        if (route == "api/user-presets")
+        {
+            var presets=new UserPresetStore();
+            object result;
+            if(context.Request.HttpMethod=="POST")
+            {
+                if(context.Request.ContentLength64>8192 || context.Request.ContentType?.StartsWith("application/json",StringComparison.OrdinalIgnoreCase)!=true)
+                    throw new ArgumentException("JSON body required, maximum 8 KB.");
+                var origin=context.Request.Headers["Origin"];
+                if(origin!=null && origin!=$"http://localhost:{port}") throw new InvalidOperationException("Cross-origin update refused.");
+                // Bound the payload even when the client uses chunked transfer with no Content-Length.
+                using var body=new StreamReader(context.Request.InputStream);
+                var payload=new char[8193];
+                var charsRead=await body.ReadBlockAsync(payload,0,payload.Length);
+                if(charsRead>8192)throw new ArgumentException("Preset JSON exceeds 8 KB.");
+                using var json=JsonDocument.Parse(new string(payload,0,charsRead));
+                var name=json.RootElement.GetProperty("name").GetString()??"";
+                result=json.RootElement.TryGetProperty("delete",out var delete) && delete.GetBoolean()
+                    ? presets.Delete(name)
+                    : presets.Save(name,json.RootElement.GetProperty("columns").EnumerateArray().Select(x=>x.GetString()??""));
+            }
+            else result=presets.Load();
+            await Send(JsonSerializer.Serialize(result),"application/json; charset=utf-8");
+        }
+        else if (route == "api/fixed-issues")
+        {
+            if (!File.Exists(warehousePath)) throw new FileNotFoundException("Issue warehouse not found.");
+            using var runDb=new SqliteConnection(new SqliteConnectionStringBuilder{DataSource=database,Mode=SqliteOpenMode.ReadOnly,Pooling=false}.ToString());runDb.Open();
+            using var warehouse=new SqliteConnection(new SqliteConnectionStringBuilder{DataSource=warehousePath,Pooling=false}.ToString());warehouse.Open();
+            IssueWorkflowStore.EnsureSchema(warehouse);
+            var fixedRows=new List<object>();
+            using var models=runDb.CreateCommand();models.CommandText="SELECT model_id,path,project_id,lineage_id FROM models WHERE project_id<>'' AND lineage_id<>''";
+            using var reader=models.ExecuteReader();
+            while(reader.Read())
+            {
+                using var find=warehouse.CreateCommand();find.CommandText="SELECT unique_id,rule_id,parameter_name,assignee,due_date,comment,status FROM issue_registry WHERE project_id=$p AND lineage_id=$l AND status='Closed' AND reviewer_signoff='' ORDER BY due_date LIMIT 200";
+                find.Parameters.AddWithValue("$p",reader.GetString(2));find.Parameters.AddWithValue("$l",reader.GetString(3));
+                using var issues=find.ExecuteReader();while(issues.Read())fixedRows.Add(new {model_id=reader.GetInt64(0),path=reader.GetString(1),unique_id=issues.GetString(0),rule_id=issues.GetString(1),parameter_name=issues.GetString(2),assignee=issues.GetString(3),due_date=issues.GetString(4),comment=issues.GetString(5),status=issues.GetString(6)});
+            }
+            await Send(JsonSerializer.Serialize(fixedRows),"application/json; charset=utf-8");
+        }
+        else if (route == "api/issue-workflow")
+        {
+            if (!File.Exists(warehousePath)) throw new FileNotFoundException("Run warehouse not found.");
+            using var runDb = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource=database,Mode=SqliteOpenMode.ReadOnly,Pooling=false }.ToString()); runDb.Open();
+            var qWorkflow=context.Request.QueryString;
+            using var modelCmd=runDb.CreateCommand(); modelCmd.CommandText="SELECT project_id,lineage_id FROM models WHERE model_id=$m";
+            modelCmd.Parameters.AddWithValue("$m",qWorkflow["model"] ?? "");
+            using var modelReader=modelCmd.ExecuteReader();
+            if (!modelReader.Read() || modelReader.FieldCount<2 || string.IsNullOrEmpty(modelReader.GetString(0)) || string.IsNullOrEmpty(modelReader.GetString(1)))
+                throw new InvalidOperationException("This run has no stable project/lineage identity; extract again with the current CloudApp.");
+            var project=modelReader.GetString(0); var lineage=modelReader.GetString(1);
+            using var warehouse=new SqliteConnection(new SqliteConnectionStringBuilder { DataSource=warehousePath,Pooling=false }.ToString()); warehouse.Open();
+            IssueWorkflowStore.EnsureSchema(warehouse);
+            var uid=qWorkflow["uid"] ?? "";var rule=qWorkflow["rule"] ?? "";var parameter=qWorkflow["parameter"] ?? "";
+            object result;
+            if (context.Request.HttpMethod=="POST")
+            {
+                if (context.Request.ContentLength64>8192 || context.Request.ContentType?.StartsWith("application/json",StringComparison.OrdinalIgnoreCase)!=true)
+                    throw new ArgumentException("JSON body required, maximum 8 KB.");
+                var origin=context.Request.Headers["Origin"];
+                if (origin!=null && origin!=$"http://localhost:{port}") throw new InvalidOperationException("Cross-origin update refused.");
+                using var body=new StreamReader(context.Request.InputStream);using var json=JsonDocument.Parse(await body.ReadToEndAsync());
+                string Field(string name)=>json.RootElement.TryGetProperty(name,out var item)?item.GetString()??"":"";
+                result=IssueWorkflowStore.Update(warehouse,project,lineage,uid,rule,parameter,Field("actor"),Field("assignee"),Field("dueDate"),Field("comment"),Field("signoff"));
+            }
+            else result=IssueWorkflowStore.Read(warehouse,project,lineage,uid,rule,parameter);
+            await Send(JsonSerializer.Serialize(result),"application/json; charset=utf-8");
+        }
+        else if (context.Request.HttpMethod != "GET") { context.Response.StatusCode=405; }
+        else if (route == "")
         {
             await Send(html, "text/html; charset=utf-8");
+        }
+        else if (route == "api/export-bcf")
+        {
+            using var exportDb=new SqliteConnection(new SqliteConnectionStringBuilder{DataSource=database,Mode=SqliteOpenMode.ReadOnly,Pooling=false}.ToString());exportDb.Open();
+            long? onlyModel=long.TryParse(context.Request.QueryString["model"],out var parsedModel)?parsedModel:null;
+            var archive=BcfExporter.Create(exportDb,onlyModel);
+            context.Response.ContentType="application/octet-stream";
+            context.Response.Headers["Content-Disposition"]="attachment; filename=\"RBDE-Issues.bcfzip\"";
+            context.Response.ContentLength64=archive.Length;
+            await context.Response.OutputStream.WriteAsync(archive);
         }
         else if (route == "api/download-pdf")
         {
@@ -321,7 +402,7 @@ while (listener.IsListening)
                     ? Query("SELECT name FROM priority_columns ORDER BY col_order").Select(r => r["name"]?.ToString() ?? "").Where(s => s.Length > 0).ToList()
                     : new List<string> { "Level", "Base Constraint", "Type Mark", "Mark", "Comments", "Type Comments", "Area", "Volume", "Length", "Material", "Fire Rating", "Workset", "Phase Created" };
 
-                var availParams = Query("SELECT name, count(DISTINCT model_id || ':' || element_id) elem_count FROM parameters WHERE has_value=1 AND trim(display_value)<>'' GROUP BY name ORDER BY elem_count DESC, name ASC LIMIT 250");
+                var availParams = Query("SELECT name, count(DISTINCT model_id || ':' || element_id) elem_count FROM parameters WHERE has_value=1 AND trim(display_value)<>'' GROUP BY name ORDER BY elem_count DESC, name ASC");
                 var levels = Query("SELECT display_value AS level, count(*) count FROM parameters WHERE name IN ('Level','Base Constraint','Reference Level','Schedule Level') AND trim(display_value)<>'' GROUP BY display_value ORDER BY count DESC LIMIT 40");
 
                 var hasIssues = TableExists("issues");
@@ -643,7 +724,7 @@ while (listener.IsListening)
                 var totalRows = Query("SELECT count(*) count" + from, values);
                 var totalCount = Convert.ToInt64(totalRows[0]["count"] ?? 0L, CultureInfo.InvariantCulture);
 
-                var catBreakdown = Query("SELECT e.category, count(*) count" + from + " GROUP BY e.category ORDER BY count DESC LIMIT 14", values);
+                var catBreakdown = Query("SELECT e.category, count(*) count" + from + " GROUP BY e.category ORDER BY count DESC", values);
 
                 var rows = Query(
                     $"SELECT e.*, m.path, m.status{from} ORDER BY e.model_id, e.element_id LIMIT {limit} OFFSET {offset}",
@@ -672,7 +753,8 @@ while (listener.IsListening)
                         colParams[pKey] = requestedCols[c];
                     }
 
-                    var sqlParams = $"SELECT model_id, element_id, name, display_value FROM parameters WHERE (model_id, element_id) IN ({string.Join(",", pairClauses)}) AND name IN ({string.Join(",", colPlaceholders)})";
+                    // Instance value wins when the same parameter name also exists on its type.
+                    var sqlParams = $"SELECT model_id, element_id, name, display_value FROM parameters WHERE (model_id, element_id) IN ({string.Join(",", pairClauses)}) AND name IN ({string.Join(",", colPlaceholders)}) ORDER BY CASE scope WHEN 'instance' THEN 0 ELSE 1 END, parameter_key";
                     var paramRecords = Query(sqlParams, colParams);
                     foreach (var pr in paramRecords)
                     {
@@ -733,18 +815,26 @@ while (listener.IsListening)
                         }
                     }
 
+                    // Choose one numeric value per element/parameter so a type fallback never doubles an instance quantity.
                     var qtoSql = $@"
-                        SELECT p.name,
-                               sum(CAST(p.raw_value AS REAL)) AS total_value,
-                               max(p.unit_type_id) AS unit,
-                               count(DISTINCT p.model_id || ':' || p.element_id) AS elem_count
-                        FROM parameters p
-                        JOIN elements e ON e.model_id=p.model_id AND e.element_id=p.element_id
-                        JOIN models m ON m.model_id=e.model_id
-                        WHERE {string.Join(" AND ", terms)}
-                          AND p.name IN ('Area', 'Volume', 'Length')
-                          AND p.storage_type IN ('Double', 'Integer')
-                        GROUP BY p.name";
+                        WITH picked AS (
+                            SELECT p.name, p.raw_value, p.unit_type_id, p.model_id, p.element_id,
+                                   ROW_NUMBER() OVER (
+                                       PARTITION BY p.model_id, p.element_id, p.name
+                                       ORDER BY CASE p.scope WHEN 'instance' THEN 0 ELSE 1 END, p.parameter_key
+                                   ) AS rank
+                            FROM parameters p
+                            JOIN elements e ON e.model_id=p.model_id AND e.element_id=p.element_id
+                            JOIN models m ON m.model_id=e.model_id
+                            WHERE {string.Join(" AND ", terms)}
+                              AND p.name IN ('Area', 'Volume', 'Length')
+                              AND p.storage_type IN ('Double', 'Integer')
+                              AND p.has_value=1 AND trim(p.raw_value)<>''
+                        )
+                        SELECT name, sum(CAST(raw_value AS REAL)) AS total_value,
+                               unit_type_id AS unit, count(*) AS elem_count
+                        FROM picked WHERE rank=1
+                        GROUP BY name, unit_type_id";
                     qtoTotals = Query(qtoSql, values);
                 }
 
