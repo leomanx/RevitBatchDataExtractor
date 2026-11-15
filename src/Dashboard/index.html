@@ -147,7 +147,13 @@ body.dark-theme .track,body.dark-theme .bar-track{background:#1e293b}
 body.dark-theme .category-ring span{background:#111827;color:#f8fafc}
 body.dark-theme .category-legend button{color:#cbd5e1}
 body.dark-theme .category-legend button:hover{background:#1e293b;color:#fff}
-body.dark-theme .col-picker{background:#0f172a;border-color:#1e293b}
+body.dark-theme .col-picker{background:#0f172a;border-color:#334155;color:#e2e8f0}
+body.dark-theme .col-picker strong{color:#f8fafc}
+.th-wrap{display:flex;align-items:center;justify-content:space-between;gap:6px}
+.th-sort{cursor:pointer;user-select:none;display:inline-flex;align-items:center;gap:4px;flex:1}
+.th-sort:hover{color:var(--teal)}
+.th-hide{border:0;background:transparent;color:inherit;opacity:.5;font-size:12px;line-height:1;padding:1px 4px;border-radius:3px}
+.th-hide:hover{opacity:1;background:rgba(239,68,68,.18);color:#ef4444}
 body.dark-theme .col-pill{background:#1e293b;border-color:#334155;color:#cbd5e1}
 body.dark-theme .col-pill.checked{background:#042f2e;border-color:#14b8a6;color:#5eead4}
 body.dark-theme .coverage-bar{background:#0c4a6e;color:#e0f2fe}
@@ -457,24 +463,30 @@ body.executive-mode .viewer-canvas-wrap{height:600px}
       <div id="colPickerDrawer" class="col-picker">
         <div class="heading-row" style="margin-bottom:6px">
           <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-            <strong style="font-size:12px;color:#0f172a">Column Presets:</strong>
-            <button type="button" class="chip-btn active" data-preset="default">Priority / Default</button>
-            <button type="button" class="chip-btn" data-preset="qaqc">Core QA/QC</button>
-            <button type="button" class="chip-btn" data-preset="qto">Quantities (QTO)</button>
-            <button type="button" class="chip-btn" data-preset="spatial">Spatial &amp; Rooms</button>
-            <button type="button" class="chip-btn" data-preset="materials">Materials &amp; Fire</button>
-            <button type="button" class="chip-btn" data-preset="mep">MEP Systems</button>
+            <strong style="font-size:12px">Column Presets:</strong>
+            <select id="builtinPresetSelect" title="Switch built-in discipline column preset" style="width:205px;margin:0;padding:4px 8px;font-size:12px">
+              <option value="default">Preset: Priority / Default</option>
+              <option value="qaqc">Preset: Core QA/QC</option>
+              <option value="qto">Preset: Quantities (QTO)</option>
+              <option value="spatial">Preset: Spatial &amp; Rooms</option>
+              <option value="materials">Preset: Materials &amp; Fire</option>
+              <option value="mep">Preset: MEP Systems</option>
+            </select>
+            <select id="personalPresetSelect" aria-label="Personal column preset" title="Select a personal saved column preset" style="width:190px;margin:0;padding:4px 8px;font-size:12px"><option value="">My saved presets…</option></select>
+            <select id="presetActionSelect" title="Manage saved presets or clear columns" style="width:195px;margin:0;padding:4px 8px;font-size:12px">
+              <option value="">Preset / Column Actions…</option>
+              <option value="load">Load Selected Saved Preset</option>
+              <option value="save">Save Current as Preset…</option>
+              <option value="delete">Delete Selected Preset</option>
+              <option value="export">Export Preset (.JSON)</option>
+              <option value="import">Import Preset (.JSON)</option>
+              <option value="clear">Clear All Active Columns</option>
+            </select>
+            <input type="file" id="personalPresetFile" accept=".json,application/json" class="hidden" aria-label="Import column preset JSON">
           </div>
           <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
             <input id="colSearch" placeholder="Filter column names..." style="width:190px;margin:0;padding:4px 8px;font-size:12px">
-            <button type="button" class="chip-btn" id="btnClearCols">Clear Columns</button>
-            <select id="personalPresetSelect" aria-label="Personal column preset" style="width:190px;margin:0"><option value="">My saved presets…</option></select>
-            <button type="button" class="chip-btn" id="btnLoadPersonalPreset">Load</button>
-            <button type="button" class="chip-btn" id="btnSavePersonalPreset">Save current</button>
-            <button type="button" class="chip-btn" id="btnDeletePersonalPreset">Delete</button>
-            <button type="button" class="chip-btn" id="btnExportPersonalPreset">Export preset</button>
-            <button type="button" class="chip-btn" id="btnImportPersonalPreset">Import preset</button>
-            <input type="file" id="personalPresetFile" accept=".json,application/json" class="hidden" aria-label="Import column preset JSON">
+            <button type="button" class="chip-btn hidden" id="btnRestoreHiddenCols" title="Restore columns temporarily hidden via table header × button">Show Hidden (0)</button>
             <span id="personalPresetCoverage" class="muted" style="font-size:12px" aria-live="polite"></span>
           </div>
         </div>
@@ -896,7 +908,7 @@ async function refreshPersonalPresets(){
   if(personalPresets.some(p=>p.Name===before))select.value=before;
 }
 function selectedPersonalPreset(){return personalPresets.find(p=>p.Name===$('personalPresetSelect').value)}
-$('btnLoadPersonalPreset').onclick=()=>{
+function loadSelectedPersonalPreset(){
   const preset=selectedPersonalPreset();if(!preset)return;
   const available=new Set(allAvailableParams.map(p=>p.name.toLowerCase()));
   const unavailable=preset.Columns.filter(c=>!available.has(c.toLowerCase()));
@@ -904,32 +916,39 @@ $('btnLoadPersonalPreset').onclick=()=>{
     ? unavailable.length+' preset column(s) have no populated values in this run: '+unavailable.slice(0,4).join(', ')
     : 'All saved columns have populated values in this run.';
   activeColumns=[...preset.Columns];renderColumnPills();load();
+}
+$('personalPresetSelect').onchange=loadSelectedPersonalPreset;
+$('presetActionSelect').onchange=async()=>{
+  const act=$('presetActionSelect').value;
+  $('presetActionSelect').value='';
+  if(!act)return;
+  if(act==='load'){loadSelectedPersonalPreset();return;}
+  if(act==='clear'){activeColumns=[];tempHiddenColumns.clear();renderColumnPills();load();return;}
+  if(act==='import'){$('personalPresetFile').click();return;}
+  if(act==='save'){
+    const name=prompt('Name this personal column preset', $('personalPresetSelect').value||'My columns');
+    if(name===null)return;
+    try{
+      const response=await fetch('api/user-presets',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,columns:activeColumns})});
+      const body=await response.json();if(!response.ok)throw Error(body.error||'Preset not saved');
+      await refreshPersonalPresets();$('personalPresetSelect').value=name.trim();
+    }catch(e){fail(e)}
+    return;
+  }
+  const preset=selectedPersonalPreset();if(!preset){fail(Error('Select a saved preset in "My saved presets" first.'));return;}
+  if(act==='delete'){
+    try{
+      const response=await fetch('api/user-presets',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:preset.Name,delete:true})});
+      const body=await response.json();if(!response.ok)throw Error(body.error||'Preset not deleted');
+      await refreshPersonalPresets();
+    }catch(e){fail(e)}
+  }else if(act==='export'){
+    const payload=JSON.stringify({schema:'RBDE-ColumnPreset-v1',name:preset.Name,columns:preset.Columns},null,2);
+    const u=URL.createObjectURL(new Blob([payload],{type:'application/json'}));
+    const a=document.createElement('a');a.href=u;a.download='rbde-column-preset.json';a.click();
+    setTimeout(()=>URL.revokeObjectURL(u),60000);
+  }
 };
-$('btnSavePersonalPreset').onclick=async()=>{
-  const name=prompt('Name this personal column preset', $('personalPresetSelect').value||'My columns');
-  if(name===null)return;
-  try{
-    const response=await fetch('api/user-presets',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,columns:activeColumns})});
-    const body=await response.json();if(!response.ok)throw Error(body.error||'Preset not saved');
-    await refreshPersonalPresets();$('personalPresetSelect').value=name.trim();
-  }catch(e){fail(e)}
-};
-$('btnDeletePersonalPreset').onclick=async()=>{
-  const preset=selectedPersonalPreset();if(!preset)return;
-  try{
-    const response=await fetch('api/user-presets',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:preset.Name,delete:true})});
-    const body=await response.json();if(!response.ok)throw Error(body.error||'Preset not deleted');
-    await refreshPersonalPresets();
-  }catch(e){fail(e)}
-};
-$('btnExportPersonalPreset').onclick=()=>{
-  const preset=selectedPersonalPreset();if(!preset)return;
-  const payload=JSON.stringify({schema:'RBDE-ColumnPreset-v1',name:preset.Name,columns:preset.Columns},null,2);
-  const u=URL.createObjectURL(new Blob([payload],{type:'application/json'}));
-  const a=document.createElement('a');a.href=u;a.download='rbde-column-preset.json';a.click();
-  setTimeout(()=>URL.revokeObjectURL(u),60000);
-};
-$('btnImportPersonalPreset').onclick=()=>$('personalPresetFile').click();
 $('personalPresetFile').onchange=async e=>{
   const file=e.target.files?.[0];if(!file)return;
   try{
@@ -997,14 +1016,152 @@ function renderColumnPills(){
   });
 }
 
+const tempHiddenColumns = new Set();
+let tableSort = { key: '', isDyn: false, dir: '' }; // dir: 'asc' | 'desc' | ''
+
+function getVisibleCoreCols() {
+  const allCore = [
+    { key: 'element_id', label: 'Model / Element ID' },
+    { key: 'category', label: 'Category' },
+    { key: 'family', label: 'Family' },
+    { key: 'type_name', label: 'Type Name' },
+    { key: 'name', label: 'Instance / Element Name' },
+    { key: 'kind', label: 'Kind' }
+  ];
+  return allCore.filter(c => !tempHiddenColumns.has('core:' + c.key));
+}
+
+function getVisibleDynCols() {
+  return activeColumns.filter(c => !tempHiddenColumns.has('dyn:' + c));
+}
+
+function updateHiddenColsBadge() {
+  const btn = $('btnRestoreHiddenCols');
+  if (!btn) return;
+  if (tempHiddenColumns.size > 0) {
+    btn.classList.remove('hidden');
+    btn.textContent = `Show Hidden (${tempHiddenColumns.size})`;
+  } else {
+    btn.classList.add('hidden');
+  }
+}
+
+$('btnRestoreHiddenCols').onclick = () => {
+  tempHiddenColumns.clear();
+  updateHiddenColsBadge();
+  renderTableHeader();
+  renderElementsRows();
+};
+
+function getCellSortValue(r, key, isDyn) {
+  if (!isDyn) {
+    if (key === 'element_id') return Number(r.element_id || 0);
+    return String(r[key] ?? '');
+  }
+  const pMap = r.params || {};
+  let val = pMap[key];
+  if (val === undefined) {
+    const fk = Object.keys(pMap).find(k => k.toLowerCase() === key.toLowerCase());
+    if (fk) val = pMap[fk];
+  }
+  return val ?? '';
+}
+
 function renderTableHeader(){
-  const coreCols = ['Model / Element ID','Category','Family','Type Name','Instance / Element Name','Kind'];
+  const visCore = getVisibleCoreCols();
+  const visDyn = getVisibleDynCols();
+  updateHiddenColsBadge();
+
+  const makeTh = (key, label, isDyn) => {
+    const isSorted = tableSort.key === key && tableSort.isDyn === isDyn;
+    const arrow = isSorted ? (tableSort.dir === 'asc' ? ' ▲' : ' ▼') : '';
+    const hideKey = (isDyn ? 'dyn:' : 'core:') + key;
+    return `<th class="${isDyn ? 'dyn-col' : ''}" title="${isDyn ? 'Dynamic Parameter: ' + esc(label) : esc(label)} — Click title to sort, click × to temporarily hide">` +
+      `<div class="th-wrap">` +
+      `<span class="th-sort" data-sortkey="${esc(key)}" data-sortdyn="${isDyn ? '1' : '0'}">${esc(label)}${arrow}</span>` +
+      `<button type="button" class="th-hide" data-hidecol="${esc(hideKey)}" title="Temporarily hide '${esc(label)}' (stays checked in Preset)">×</button>` +
+      `</div></th>`;
+  };
+
   const html = '<tr>' +
-    coreCols.map(c => '<th>'+esc(c)+'</th>').join('') +
-    activeColumns.map(c => '<th class="dyn-col" title="Dynamic Parameter Column: '+esc(c)+'">'+esc(c)+'</th>').join('') +
+    visCore.map(c => makeTh(c.key, c.label, false)).join('') +
+    visDyn.map(c => makeTh(c, c, true)).join('') +
     '</tr>';
   $('tableHead').innerHTML = html;
-  $('activeColsSummary').textContent = activeColumns.length + ' dynamic parameter column(s) active in table';
+
+  document.querySelectorAll('.th-sort').forEach(sp => {
+    sp.onclick = () => {
+      const k = sp.dataset.sortkey;
+      const isD = sp.dataset.sortdyn === '1';
+      if (tableSort.key === k && tableSort.isDyn === isD) {
+        tableSort.dir = tableSort.dir === 'asc' ? 'desc' : (tableSort.dir === 'desc' ? '' : 'asc');
+        if (!tableSort.dir) tableSort.key = '';
+      } else {
+        tableSort = { key: k, isDyn: isD, dir: 'asc' };
+      }
+      renderTableHeader();
+      renderElementsRows();
+    };
+  });
+
+  document.querySelectorAll('.th-hide').forEach(btn => {
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      tempHiddenColumns.add(btn.dataset.hidecol);
+      renderTableHeader();
+      renderElementsRows();
+    };
+  });
+
+  $('activeColsSummary').textContent = visDyn.length + ' of ' + activeColumns.length + ' dynamic column(s) shown' +
+    (tempHiddenColumns.size ? ` (${tempHiddenColumns.size} hidden)` : '');
+}
+
+function renderElementsRows() {
+  const visCore = getVisibleCoreCols();
+  const visDyn = getVisibleDynCols();
+  const colSpan = Math.max(1, visCore.length + visDyn.length);
+
+  let displayRows = rows.map((r, idx) => ({ r, origIdx: idx }));
+  if (tableSort.key && tableSort.dir) {
+    const dirMul = tableSort.dir === 'asc' ? 1 : -1;
+    displayRows.sort((a, b) => {
+      const va = getCellSortValue(a.r, tableSort.key, tableSort.isDyn);
+      const vb = getCellSortValue(b.r, tableSort.key, tableSort.isDyn);
+      const na = typeof va === 'number' ? va : parseFloat(String(va).replace(/,/g, ''));
+      const nb = typeof vb === 'number' ? vb : parseFloat(String(vb).replace(/,/g, ''));
+      if (!Number.isNaN(na) && !Number.isNaN(nb) && String(va).trim() !== '' && String(vb).trim() !== '') {
+        return (na - nb) * dirMul;
+      }
+      return String(va).localeCompare(String(vb), undefined, { numeric: true, sensitivity: 'base' }) * dirMul;
+    });
+  }
+
+  $('elements').innerHTML = displayRows.map(({ r, origIdx }) => {
+    const pMap = r.params || {};
+    const coreCells = visCore.map(c => {
+      if (c.key === 'element_id') return '<td title="' + esc(r.path) + '">' + esc(base(r.path)) + '<br><b class="mono">' + esc(r.element_id) + '</b></td>';
+      if (c.key === 'kind') return '<td><span class="badge">' + esc(r.kind) + '</span></td>';
+      return '<td title="' + esc(r[c.key]) + '">' + esc(r[c.key]) + '</td>';
+    }).join('');
+
+    const dynCells = visDyn.map(col => {
+      let val = pMap[col];
+      if (val === undefined) {
+        const foundKey = Object.keys(pMap).find(k => k.toLowerCase() === col.toLowerCase());
+        if (foundKey) val = pMap[foundKey];
+      }
+      return '<td title="' + esc(val ?? '') + '">' + (val !== undefined && val !== null && val !== '' ? esc(val) : '<span class="muted">-</span>') + '</td>';
+    }).join('');
+
+    return '<tr class="selectable" tabindex="0" data-element="' + origIdx + '">' + coreCells + dynCells + '</tr>';
+  }).join('') || empty(colSpan);
+
+  document.querySelectorAll('[data-element]').forEach(tr => {
+    const r = rows[Number(tr.dataset.element)];
+    tr.onclick = () => showDetail(r);
+    tr.onkeydown = e => { if (e.key === 'Enter') showDetail(r); };
+  });
 }
 
 async function load(){
@@ -1026,28 +1183,7 @@ async function load(){
     rows=data.rows;
     total=data.total[0]?.count||0;
     $('resultsCount').textContent=fmt(total)+' matching elements';
-
-    $('elements').innerHTML=rows.map((r,i)=>{
-      const pMap = r.params || {};
-      const dynCells = activeColumns.map(col => {
-        let val = pMap[col];
-        if (val === undefined) {
-          const foundKey = Object.keys(pMap).find(k => k.toLowerCase() === col.toLowerCase());
-          if (foundKey) val = pMap[foundKey];
-        }
-        return '<td title="'+esc(val??'')+'">'+(val !== undefined && val !== null && val !== '' ? esc(val) : '<span class="muted">-</span>')+'</td>';
-      }).join('');
-
-      return '<tr class="selectable" tabindex="0" data-element="'+i+'">' +
-        '<td title="'+esc(r.path)+'">'+esc(base(r.path))+'<br><b class="mono">'+esc(r.element_id)+'</b></td>' +
-        '<td title="'+esc(r.category)+'">'+esc(r.category)+'</td>' +
-        '<td title="'+esc(r.family)+'">'+esc(r.family)+'</td>' +
-        '<td title="'+esc(r.type_name)+'">'+esc(r.type_name)+'</td>' +
-        '<td title="'+esc(r.name)+'">'+esc(r.name)+'</td>' +
-        '<td><span class="badge">'+esc(r.kind)+'</span></td>' +
-        dynCells +
-        '</tr>';
-    }).join('') || empty(colSpan);
+    renderElementsRows();
 
     $('page').textContent='Page '+(page+1)+' of '+Math.max(1,Math.ceil(total/50));
     $('prev').disabled=page===0;
@@ -1416,23 +1552,20 @@ function exportRowsToCsv(dataset, filename){
 document.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>switchTab(b.dataset.tab));
 $('cardIssues').onclick=()=>switchTab('issues');
 
-document.querySelectorAll('[data-preset]').forEach(btn => {
-  btn.onclick = () => {
-    document.querySelectorAll('[data-preset]').forEach(b => b.classList.toggle('active', b === btn));
-    const presetKey = btn.dataset.preset;
-    const availSet = new Set(allAvailableParams.map(p => p.name.toLowerCase()));
-    if (presetKey === 'default') {
-      const prio = (overview?.priorityColumns || []).filter(c => availSet.has(c.toLowerCase()));
-      activeColumns = prio.length ? prio.slice(0, 12) : allAvailableParams.slice(0, 10).map(p => p.name);
-    } else {
-      const targetList = PRESETS[presetKey] || [];
-      activeColumns = targetList.filter(c => availSet.has(c.toLowerCase()));
-      if (activeColumns.length === 0) activeColumns = targetList.slice(0, 8);
-    }
-    renderColumnPills();
-    load();
-  };
-});
+$('builtinPresetSelect').onchange = () => {
+  const presetKey = $('builtinPresetSelect').value;
+  const availSet = new Set(allAvailableParams.map(p => p.name.toLowerCase()));
+  if (presetKey === 'default') {
+    const prio = (overview?.priorityColumns || []).filter(c => availSet.has(c.toLowerCase()));
+    activeColumns = prio.length ? prio.slice(0, 12) : allAvailableParams.slice(0, 10).map(p => p.name);
+  } else {
+    const targetList = PRESETS[presetKey] || [];
+    activeColumns = targetList.filter(c => availSet.has(c.toLowerCase()));
+    if (activeColumns.length === 0) activeColumns = targetList.slice(0, 8);
+  }
+  renderColumnPills();
+  load();
+};
 
 // ============================================================
 // AUTODESK APS 2D/3D COORDINATION STUDIO (SVF2 60fps + Exporters)
@@ -3204,7 +3337,6 @@ $('btnFilterToSelected3D').onclick = () => {
 
 $('btnToggleCols').onclick = () => $('colPickerDrawer').classList.toggle('hidden');
 $('colSearch').oninput = renderColumnPills;
-$('btnClearCols').onclick = () => { activeColumns = []; renderColumnPills(); load(); };
 $('valAuditSelect').onchange = loadValueDistribution;
 
 for (const id of ['issueTeam','issueLifecycle','issueEvalStatus','issueSeverity','issueRule','issueModel']) {
