@@ -2262,9 +2262,12 @@ $('viewerLevelCutSelect').onchange = async () => {
   if (!apsViewer || !apsViewer.model) return;
   const secExt = await apsViewer.loadExtension('Autodesk.Section');
   if (!lv) {
-    if (secExt && typeof secExt.setSectionBox === 'function') secExt.activate(false);
-    apsViewer.isolate([]);
-    apsViewer.fitToView();
+    if (secExt && typeof secExt.deactivate === 'function') secExt.deactivate();
+    if (typeof apsViewer.setCutPlanes === 'function') apsViewer.setCutPlanes([]);
+    sectionBoxActive = false;
+    for (const m of getAllLoadedViewerModels()) apsViewer.isolate([], m);
+    apsViewer.fitToView(undefined, undefined, true);
+    if (apsViewer.impl) apsViewer.impl.invalidate(true, true, true);
     $('viewerStatusText').textContent = 'Cleared Floor Level section slice.';
     return;
   }
@@ -2289,24 +2292,93 @@ $('btnSplitLayout').onclick = () => {
   if (apsViewer) setTimeout(() => apsViewer.resize(), 180);
 };
 
+function getAllLoadedViewerModels() {
+  if (!apsViewer) return [];
+  if (typeof apsViewer.getAllModels === 'function') {
+    const ms = apsViewer.getAllModels();
+    if (ms && ms.length) return ms;
+  }
+  return apsViewer.model ? [apsViewer.model] : [];
+}
+
+function getCombinedModelBounds() {
+  if (typeof THREE === 'undefined') return null;
+  const models = getAllLoadedViewerModels();
+  const box = new THREE.Box3();
+  for (const m of models) {
+    if (typeof m.getBoundingBox === 'function') {
+      const mb = m.getBoundingBox();
+      if (mb && !mb.isEmpty()) box.union(mb);
+    }
+  }
+  return box.isEmpty() ? null : box;
+}
+
+function setViewerCameraPreset(mode) {
+  if (!apsViewer || !apsViewer.navigation) return;
+  const box = getCombinedModelBounds();
+  const nav = apsViewer.navigation;
+
+  if (mode === 'top' || mode === 'front') {
+    if (typeof nav.toOrthographic === 'function') nav.toOrthographic();
+  } else {
+    if (typeof nav.toPerspective === 'function') nav.toPerspective();
+  }
+
+  if (box) {
+    const center = new THREE.Vector3();
+    const size = new THREE.Vector3();
+    box.getCenter(center);
+    box.getSize(size);
+    const maxDim = Math.max(size.x, size.y, size.z, 10);
+    const dist = maxDim * 1.6;
+
+    let eye, up;
+    if (mode === 'top') {
+      // Top Plan: look straight down -Z, North (+Y) up
+      eye = new THREE.Vector3(center.x, center.y, center.z + dist);
+      up = new THREE.Vector3(0, 1, 0);
+    } else if (mode === 'front') {
+      // Front Elevation: look along +Y (from -Y towards +Y), Z up
+      eye = new THREE.Vector3(center.x, center.y - dist, center.z);
+      up = new THREE.Vector3(0, 0, 1);
+    } else {
+      // 3D Isometric Perspective
+      eye = new THREE.Vector3(center.x + dist * 0.75, center.y - dist * 0.75, center.z + dist * 0.65);
+      up = new THREE.Vector3(0, 0, 1);
+    }
+
+    if (typeof nav.setCameraUpVector === 'function') nav.setCameraUpVector(up);
+    if (typeof nav.setView === 'function') nav.setView(eye, center);
+  }
+
+  try {
+    const vc = apsViewer.getExtension('Autodesk.ViewCubeUi');
+    if (vc && typeof vc.setViewCube === 'function') {
+      vc.setViewCube(mode === 'top' ? 'top' : mode === 'front' ? 'front' : 'front top right');
+    }
+  } catch { }
+
+  if (typeof apsViewer.fitToView === 'function') {
+    apsViewer.fitToView(undefined, undefined, true);
+  }
+  if (apsViewer.impl && typeof apsViewer.impl.invalidate === 'function') {
+    apsViewer.impl.invalidate(true, true, true);
+  }
+}
+
 $('btnOrthoTop').onclick = () => {
-  if (!apsViewer) return;
-  apsViewer.navigation.toOrthographic();
-  apsViewer.setViewCube('top');
+  setViewerCameraPreset('top');
   $('viewerStatusText').textContent = 'Camera: 2D Top Plan (True-Scale Orthographic).';
 };
 
 $('btnOrthoFront').onclick = () => {
-  if (!apsViewer) return;
-  apsViewer.navigation.toOrthographic();
-  apsViewer.setViewCube('front');
+  setViewerCameraPreset('front');
   $('viewerStatusText').textContent = 'Camera: Front Elevation (True-Scale Orthographic).';
 };
 
 $('btnPersp3D').onclick = () => {
-  if (!apsViewer) return;
-  apsViewer.navigation.toPerspective();
-  apsViewer.setViewCube('front top right');
+  setViewerCameraPreset('iso');
   $('viewerStatusText').textContent = 'Camera: 3D Perspective Isometric.';
 };
 
@@ -2320,8 +2392,13 @@ $('btnToggleSectionBox').onclick = async () => {
     $('viewerStatusText').textContent = 'Applied 3D Section Box around ' + selection.selection.length + ' selected element(s).';
   } else {
     sectionBoxActive = !sectionBoxActive;
-    if (sectionBoxActive) secExt.activate('box');
-    else secExt.activate(false);
+    if (sectionBoxActive) {
+      secExt.activate('box');
+    } else {
+      if (typeof secExt.deactivate === 'function') secExt.deactivate();
+      if (typeof apsViewer.setCutPlanes === 'function') apsViewer.setCutPlanes([]);
+    }
+    if (apsViewer.impl) apsViewer.impl.invalidate(true, true, true);
     $('viewerStatusText').textContent = sectionBoxActive ? 'Interactive 3D Section Box active (drag arrows in viewport).' : 'Section Box turned off.';
   }
 };
@@ -2944,14 +3021,19 @@ $('btnColorTeams').onclick = () => apply3DHeatmap('teams');
 $('btnColorDiffs').onclick = () => apply3DHeatmap('diffs');
 $('btnReset3D').onclick = async () => {
   if (!apsViewer || !apsViewer.model) return;
-  const secExt = await apsViewer.loadExtension('Autodesk.Section');
-  if (secExt) secExt.activate(false);
+  try {
+    const secExt = await apsViewer.loadExtension('Autodesk.Section');
+    if (secExt && typeof secExt.deactivate === 'function') secExt.deactivate();
+  } catch { }
+  if (typeof apsViewer.setCutPlanes === 'function') apsViewer.setCutPlanes([]);
   sectionBoxActive = false;
   $('viewerLevelCutSelect').value = '';
-  apsViewer.clearThemingColors(apsViewer.model);
-  apsViewer.isolate([]);
-  apsViewer.select([]);
-  apsViewer.fitToView();
+  for (const m of getAllLoadedViewerModels()) {
+    apsViewer.clearThemingColors(m);
+    apsViewer.isolate([], m);
+    apsViewer.select([], m);
+  }
+  setViewerCameraPreset('iso');
   $('viewerStatusText').textContent = 'Reset 3D view, section planes, and theming colors.';
 };
 $('btnExpand3D').onclick = () => {
