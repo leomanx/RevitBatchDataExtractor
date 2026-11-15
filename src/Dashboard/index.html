@@ -473,19 +473,19 @@ body.executive-mode .viewer-canvas-wrap{height:600px}
               <option value="mep">Preset: MEP Systems</option>
             </select>
             <select id="personalPresetSelect" aria-label="Personal column preset" title="Select a personal saved column preset" style="width:190px;margin:0;padding:4px 8px;font-size:12px"><option value="">My saved presets…</option></select>
-            <select id="presetActionSelect" title="Manage saved presets or clear columns" style="width:195px;margin:0;padding:4px 8px;font-size:12px">
-              <option value="">Preset / Column Actions…</option>
+            <select id="presetActionSelect" title="Load, save, export, or import saved presets" style="width:185px;margin:0;padding:4px 8px;font-size:12px">
+              <option value="">Saved Preset Actions…</option>
               <option value="load">Load Selected Saved Preset</option>
               <option value="save">Save Current as Preset…</option>
-              <option value="delete">Delete Selected Preset</option>
               <option value="export">Export Preset (.JSON)</option>
               <option value="import">Import Preset (.JSON)</option>
-              <option value="clear">Clear All Active Columns</option>
             </select>
+            <button type="button" class="chip-btn" id="btnDeletePersonalPreset" title="Delete the selected saved preset" style="color:#ef4444;border-color:rgba(239,68,68,.4)">Delete Preset</button>
             <input type="file" id="personalPresetFile" accept=".json,application/json" class="hidden" aria-label="Import column preset JSON">
           </div>
           <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
             <input id="colSearch" placeholder="Filter column names..." style="width:190px;margin:0;padding:4px 8px;font-size:12px">
+            <button type="button" class="chip-btn" id="btnClearCols" title="Clear all active parameter columns from the table">Clear Columns</button>
             <button type="button" class="chip-btn hidden" id="btnRestoreHiddenCols" title="Restore columns temporarily hidden via table header × button">Show Hidden (0)</button>
             <span id="personalPresetCoverage" class="muted" style="font-size:12px" aria-live="polite"></span>
           </div>
@@ -923,7 +923,6 @@ $('presetActionSelect').onchange=async()=>{
   $('presetActionSelect').value='';
   if(!act)return;
   if(act==='load'){loadSelectedPersonalPreset();return;}
-  if(act==='clear'){activeColumns=[];tempHiddenColumns.clear();renderColumnPills();load();return;}
   if(act==='import'){$('personalPresetFile').click();return;}
   if(act==='save'){
     const name=prompt('Name this personal column preset', $('personalPresetSelect').value||'My columns');
@@ -936,19 +935,24 @@ $('presetActionSelect').onchange=async()=>{
     return;
   }
   const preset=selectedPersonalPreset();if(!preset){fail(Error('Select a saved preset in "My saved presets" first.'));return;}
-  if(act==='delete'){
-    try{
-      const response=await fetch('api/user-presets',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:preset.Name,delete:true})});
-      const body=await response.json();if(!response.ok)throw Error(body.error||'Preset not deleted');
-      await refreshPersonalPresets();
-    }catch(e){fail(e)}
-  }else if(act==='export'){
+  if(act==='export'){
     const payload=JSON.stringify({schema:'RBDE-ColumnPreset-v1',name:preset.Name,columns:preset.Columns},null,2);
     const u=URL.createObjectURL(new Blob([payload],{type:'application/json'}));
     const a=document.createElement('a');a.href=u;a.download='rbde-column-preset.json';a.click();
     setTimeout(()=>URL.revokeObjectURL(u),60000);
   }
 };
+$('btnDeletePersonalPreset').onclick=async()=>{
+  const preset=selectedPersonalPreset();
+  if(!preset){fail(Error('Select a saved preset in "My saved presets" first.'));return;}
+  if(!confirm('Delete saved preset "'+preset.Name+'"?'))return;
+  try{
+    const response=await fetch('api/user-presets',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:preset.Name,delete:true})});
+    const body=await response.json();if(!response.ok)throw Error(body.error||'Preset not deleted');
+    await refreshPersonalPresets();
+  }catch(e){fail(e)}
+};
+$('btnClearCols').onclick=()=>{activeColumns=[];tempHiddenColumns.clear();renderColumnPills();load();};
 $('personalPresetFile').onchange=async e=>{
   const file=e.target.files?.[0];if(!file)return;
   try{
