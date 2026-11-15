@@ -166,11 +166,66 @@ public sealed class FixAssistantCommand : IExternalCommand
         }
     }
 
-    internal static List<FixIssueItem> LoadFixIssues(string jsonPath)
+    internal static List<FixIssueItem> LoadFixIssues(string filePath)
     {
         var list = new List<FixIssueItem>();
-        using var doc = JsonDocument.Parse(File.ReadAllText(jsonPath));
-        if (!doc.RootElement.TryGetProperty("issues", out var arr)) return list;
+        if (filePath.EndsWith(".csv", StringComparison.OrdinalIgnoreCase))
+        {
+            var lines = File.ReadAllLines(filePath);
+            if (lines.Length < 2) return list;
+            var headers = SplitCsvLine(lines[0]).Select(h => h.Trim()).ToList();
+            int idxEl = headers.FindIndex(h => h.Equals("ElementId", StringComparison.OrdinalIgnoreCase));
+            int idxUid = headers.FindIndex(h => h.Equals("UniqueId", StringComparison.OrdinalIgnoreCase));
+            int idxParam = headers.FindIndex(h => h.Equals("ParameterName", StringComparison.OrdinalIgnoreCase));
+            int idxNew = headers.FindIndex(h => h.Equals("NewValue", StringComparison.OrdinalIgnoreCase));
+            int idxCur = headers.FindIndex(h => h.Equals("CurrentValue", StringComparison.OrdinalIgnoreCase));
+            int idxModel = headers.FindIndex(h => h.Equals("ModelName", StringComparison.OrdinalIgnoreCase));
+            int idxCat = headers.FindIndex(h => h.Equals("Category", StringComparison.OrdinalIgnoreCase));
+
+            if (idxParam < 0 || idxNew < 0) return list;
+
+            for (int i = 1; i < lines.Length; i++)
+            {
+                if (string.IsNullOrWhiteSpace(lines[i])) continue;
+                var cols = SplitCsvLine(lines[i]);
+                string Col(int idx) => idx >= 0 && idx < cols.Count ? cols[idx].Trim() : "";
+                long.TryParse(Col(idxEl), out var elId);
+                var newVal = Col(idxNew);
+                if (string.IsNullOrWhiteSpace(newVal)) continue;
+
+                list.Add(new FixIssueItem
+                {
+                    ElementId = elId,
+                    UniqueId = Col(idxUid),
+                    ModelName = Col(idxModel),
+                    Discipline = "PATCH",
+                    Severity = "Patch",
+                    RuleId = "CSV-ROUNDTRIP",
+                    Category = Col(idxCat),
+                    ParameterName = Col(idxParam),
+                    ActualValue = Col(idxCur),
+                    ProposedValue = newVal,
+                    ExpectedRule = $"Set = {newVal}",
+                    LifecycleState = "Patch",
+                    Message = $"CSV Roundtrip Patch -> {newVal}"
+                });
+            }
+            return list;
+        }
+
+        using var doc = JsonDocument.Parse(File.ReadAllText(filePath));
+        JsonElement arr;
+        bool isPatchSchema = false;
+        if (doc.RootElement.TryGetProperty("issues", out var issArr))
+        {
+            arr = issArr;
+        }
+        else if (doc.RootElement.TryGetProperty("items", out var patchArr))
+        {
+            arr = patchArr;
+            isPatchSchema = true;
+        }
+        else return list;
 
         foreach (var item in arr.EnumerateArray())
         {
@@ -185,26 +240,55 @@ public sealed class FixAssistantCommand : IExternalCommand
                 return "";
             }
 
+            var newVal = GetStr("NewValue", "new_value");
+            var curVal = isPatchSchema ? GetStr("CurrentValue", "current_value") : GetStr("ActualValue", "actual_value");
+            if (isPatchSchema && newVal == curVal) continue;
+
             list.Add(new FixIssueItem
             {
                 ElementId = elId,
                 UniqueId = GetStr("UniqueId", "unique_id"),
                 ModelName = GetStr("ModelName", "model_name"),
-                Discipline = GetStr("Discipline", "discipline"),
-                Severity = GetStr("Severity", "severity"),
-                RuleId = GetStr("RuleId", "rule_id"),
+                Discipline = isPatchSchema ? "PATCH" : GetStr("Discipline", "discipline"),
+                Severity = isPatchSchema ? "Patch" : GetStr("Severity", "severity"),
+                RuleId = isPatchSchema ? "JSON-PATCH" : GetStr("RuleId", "rule_id"),
                 Category = GetStr("Category", "category"),
                 Family = GetStr("Family", "family"),
                 TypeName = GetStr("TypeName", "type_name"),
                 ParameterName = GetStr("ParameterName", "parameter_name"),
-                ActualValue = GetStr("ActualValue", "actual_value"),
-                ExpectedRule = GetStr("ExpectedRule", "expected_rule"),
-                LifecycleState = GetStr("LifecycleState", "lifecycle_state"),
-                Message = GetStr("Message", "message")
+                ActualValue = curVal,
+                ProposedValue = newVal,
+                ExpectedRule = isPatchSchema ? $"Set = {newVal}" : GetStr("ExpectedRule", "expected_rule"),
+                LifecycleState = isPatchSchema ? "Patch" : GetStr("LifecycleState", "lifecycle_state"),
+                Message = isPatchSchema ? $"Roundtrip Patch -> {newVal}" : GetStr("Message", "message")
             });
         }
 
         return list;
+    }
+
+    private static List<string> SplitCsvLine(string line)
+    {
+        var result = new List<string>();
+        var cur = new StringBuilder();
+        bool inQuotes = false;
+        for (int i = 0; i < line.Length; i++)
+        {
+            char c = line[i];
+            if (c == '"')
+            {
+                if (inQuotes && i + 1 < line.Length && line[i + 1] == '"') { cur.Append('"'); i++; }
+                else inQuotes = !inQuotes;
+            }
+            else if (c == ',' && !inQuotes)
+            {
+                result.Add(cur.ToString());
+                cur.Clear();
+            }
+            else cur.Append(c);
+        }
+        result.Add(cur.ToString());
+        return result;
     }
 }
 
@@ -341,6 +425,33 @@ internal sealed class FixAssistantWindow : Window
 
         var btnPanel = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
 
+        var btnImportPatch = new Button
+        {
+            Content = "Import Patch (.JSON / .CSV)",
+            Padding = new Thickness(10, 8, 10, 8),
+            Margin = new Thickness(0, 0, 8, 0)
+        };
+        btnImportPatch.Click += (_, _) =>
+        {
+            var dlg = new Microsoft.Win32.OpenFileDialog
+            {
+                Title = "Import Roundtrip Parameter Patch (parameter_patch.json or .csv)",
+                Filter = "Patch Files (*.json;*.csv)|*.json;*.csv|All Files (*.*)|*.*"
+            };
+            if (dlg.ShowDialog(this) != true) return;
+            var loaded = FixAssistantCommand.LoadFixIssues(dlg.FileName);
+            allIssues = loaded;
+            sourceJsonPath = dlg.FileName;
+            if (!cmbTeam.Items.Contains("PATCH")) cmbTeam.Items.Add("PATCH");
+            cmbTeam.SelectedItem = "PATCH";
+            if (uiApp.ActiveUIDocument?.Document != null)
+            {
+                PrecomputeImpactForHostAndLinks(uiApp.ActiveUIDocument.Document);
+            }
+            RefreshFilteredList();
+            txtStatus.Text = $"Loaded {loaded.Count:N0} roundtrip patch item(s) from {Path.GetFileName(dlg.FileName)}.";
+        };
+
         var btnRefreshLinks = new Button
         {
             Content = "Re-Scan Host & Links",
@@ -385,6 +496,7 @@ internal sealed class FixAssistantWindow : Window
         };
         btnApplyFix.Click += (_, _) => RaiseAction(RevitActionKind.ApplyParameterFix);
 
+        btnPanel.Children.Add(btnImportPatch);
         btnPanel.Children.Add(btnRefreshLinks);
         btnPanel.Children.Add(btnZoomActive);
         btnPanel.Children.Add(btnSectionBox3D);
@@ -834,23 +946,23 @@ internal sealed class FixAssistantWindow : Window
     {
         var teamCode = (cmbTeam.SelectedItem?.ToString() ?? "").Trim().ToUpperInvariant();
         var reviewer = txtReviewer.Text.Trim();
-        var newValue = txtBulkValue.Text.Trim();
+        var bulkVal = txtBulkValue.Text.Trim();
 
-        if (teamCode is not ("AR" or "ID" or "MEP" or "STR") || string.IsNullOrEmpty(reviewer))
+        if (teamCode is not ("AR" or "ID" or "MEP" or "STR" or "PATCH") || string.IsNullOrEmpty(reviewer))
         {
-            MessageBox.Show(this, "Please select a specific Team Authorization Code (AR, ID, MEP, or STR) and enter your Reviewer ID before writing to the model.", "Authorization Required", MessageBoxButton.OK, MessageBoxImage.Warning);
-            return;
-        }
-
-        if (string.IsNullOrEmpty(newValue))
-        {
-            MessageBox.Show(this, "Please enter a Proposed Parameter Value to write to the selected Host elements.", "Value Required", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBox.Show(this, "Please select a specific Team Authorization Code (AR, ID, MEP, STR, or PATCH) and enter your Reviewer ID before writing to the model.", "Authorization Required", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
 
         var hostDoc = uiDoc.Document;
         var targets = GetTargetItems();
         if (targets.Count == 0) return;
+
+        if (string.IsNullOrEmpty(bulkVal) && targets.All(t => string.IsNullOrWhiteSpace(t.ProposedValue)))
+        {
+            MessageBox.Show(this, "Please enter a Proposed Parameter Value (or import a JSON/CSV Patch with NewValue) to write to the selected Host elements.", "Value Required", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
 
         var loadedLinks = new FilteredElementCollector(hostDoc)
             .OfClass(typeof(RevitLinkInstance))
@@ -907,7 +1019,7 @@ internal sealed class FixAssistantWindow : Window
             $"• Shared Host Family Type Writes: {uniqueTypeIds.Count:N0} type(s) (Affects {totalTypeAffectedInstances:N0} total instances in model)\n" +
             $"• Skipped Linked Elements (Read-Only in Host): {linkedReadOnlyCount:N0}\n" +
             $"• Skipped Unmatched: {skippedMismatch:N0}\n" +
-            $"• New Value to Write: '{newValue}'\n\n" +
+            $"• Value to Write: '{(string.IsNullOrEmpty(bulkVal) ? "(Per-Row Patch Values)" : bulkVal)}'\n\n" +
             "Proceed with Revit Transaction and append to audit log?",
             "Confirm Model Modification & Impact Scope", MessageBoxButton.YesNo, MessageBoxImage.Question);
 
@@ -921,6 +1033,9 @@ internal sealed class FixAssistantWindow : Window
             trans.Start();
             foreach (var item in targets)
             {
+                var valueToWrite = string.IsNullOrEmpty(bulkVal) ? item.ProposedValue.Trim() : bulkVal;
+                if (string.IsNullOrEmpty(valueToWrite)) continue;
+
                 var res = ResolveInHostOrLinks(hostDoc, loadedLinks, item, out _);
                 if (res == null || res.IsLinked) continue;
 
@@ -937,10 +1052,17 @@ internal sealed class FixAssistantWindow : Window
                     blastRadius = hostTypeInstanceCounts.GetValueOrDefault(el.GetTypeId().Value, 1);
                 }
 
-                if (param != null && !param.IsReadOnly && param.StorageType == StorageType.String)
+                if (param != null && !param.IsReadOnly)
                 {
-                    var oldVal = param.AsString() ?? "";
-                    if (param.Set(newValue))
+                    var oldVal = param.AsValueString() ?? param.AsString() ?? "";
+                    bool wrote = param.StorageType switch
+                    {
+                        StorageType.String => param.Set(valueToWrite),
+                        StorageType.Double when double.TryParse(valueToWrite, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var dVal) => param.Set(dVal),
+                        StorageType.Integer when int.TryParse(valueToWrite, out var iVal) => param.Set(iVal),
+                        _ => false
+                    };
+                    if (wrote)
                     {
                         updatedCount++;
                         auditLines.Add(JsonSerializer.Serialize(new
@@ -958,7 +1080,7 @@ internal sealed class FixAssistantWindow : Window
                             uniqueId = item.UniqueId,
                             parameter = item.ParameterName,
                             oldValue = oldVal,
-                            newValue
+                            newValue = valueToWrite
                         }));
                     }
                 }

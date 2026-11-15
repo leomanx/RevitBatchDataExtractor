@@ -234,6 +234,47 @@ while (listener.IsListening)
             else result=IssueWorkflowStore.Read(warehouse,project,lineage,uid,rule,parameter);
             await Send(JsonSerializer.Serialize(result),"application/json; charset=utf-8");
         }
+        else if (route == "api/spatial-diffs" && context.Request.HttpMethod == "POST")
+        {
+            if (context.Request.ContentLength64 > 4 * 1024 * 1024 || context.Request.ContentType?.StartsWith("application/json", StringComparison.OrdinalIgnoreCase) != true)
+                throw new ArgumentException("JSON body required, maximum 4 MB.");
+            var origin = context.Request.Headers["Origin"];
+            if (origin != null && origin != $"http://localhost:{port}") throw new InvalidOperationException("Cross-origin update refused.");
+
+            using var body = new StreamReader(context.Request.InputStream);
+            using var json = JsonDocument.Parse(await body.ReadToEndAsync());
+            var root = json.RootElement;
+            int modelId = root.TryGetProperty("modelId", out var midProp) ? midProp.GetInt32() : 1;
+            string modelKey = root.TryGetProperty("modelKey", out var mkProp) ? mkProp.GetString() ?? $"model-{modelId}" : $"model-{modelId}";
+
+            var boxes = new List<SpatialBoxInput>();
+            if (root.TryGetProperty("boxes", out var arr) && arr.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var item in arr.EnumerateArray())
+                {
+                    boxes.Add(new SpatialBoxInput(
+                        item.TryGetProperty("uniqueId", out var u) ? u.GetString() ?? "" : "",
+                        item.TryGetProperty("elementId", out var e) ? e.GetInt64() : 0,
+                        item.TryGetProperty("category", out var c) ? c.GetString() ?? "" : "",
+                        item.TryGetProperty("family", out var f) ? f.GetString() ?? "" : "",
+                        item.TryGetProperty("typeName", out var t) ? t.GetString() ?? "" : "",
+                        item.GetProperty("minX").GetDouble(),
+                        item.GetProperty("minY").GetDouble(),
+                        item.GetProperty("minZ").GetDouble(),
+                        item.GetProperty("maxX").GetDouble(),
+                        item.GetProperty("maxY").GetDouble(),
+                        item.GetProperty("maxZ").GetDouble()));
+                }
+            }
+
+            using var wDb = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = warehousePath, Pooling = false }.ToString());
+            wDb.Open();
+            using var eDb = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = database, Pooling = false }.ToString());
+            eDb.Open();
+
+            var syncRes = SpatialDiffStore.SyncAndComputeDiffs(wDb, eDb, modelId, modelKey, boxes);
+            await Send(JsonSerializer.Serialize(syncRes), "application/json; charset=utf-8");
+        }
         else if (context.Request.HttpMethod != "GET") { context.Response.StatusCode=405; }
         else if (route == "")
         {

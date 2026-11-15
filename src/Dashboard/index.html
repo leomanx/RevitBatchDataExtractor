@@ -118,6 +118,15 @@ dialog::backdrop{background:rgba(15,23,42,.55)}
 .col-pill{display:inline-flex;align-items:center;gap:5px;background:#fff;border:1px solid #cbd5e1;border-radius:5px;padding:3px 8px;font-size:11.5px;cursor:pointer;user-select:none}
 .col-pill input{width:auto;margin:0;padding:0}
 .col-pill.checked{background:#f0fdfa;border-color:#0d9488;color:#0f766e;font-weight:600}
+body.executive-mode aside,
+body.executive-mode #filters,
+body.executive-mode .col-picker,
+body.executive-mode #coverageBanner,
+body.executive-mode #btnToggleCols,
+body.executive-mode #btnHeaderTelegramBot,
+body.executive-mode #btnExportRevitPatch{display:none!important}
+body.executive-mode main{margin-left:0;max-width:1440px;margin-inline:auto}
+body.executive-mode .viewer-canvas-wrap{height:600px}
 @media(max-width:1300px){.grid-3,.grid-2{grid-template-columns:1fr}.filters{grid-template-columns:repeat(3,1fr)}.cards{grid-template-columns:repeat(3,1fr)}}
 @media(max-width:850px){aside{position:static;width:auto;padding:16px}.side-note{display:none}nav{margin-top:10px;display:flex;flex-wrap:wrap}main{margin:0;padding:16px}.filters,.cards{grid-template-columns:1fr}}
 @media print{aside,.filters,.actions,.pager,.col-picker,header button{display:none!important}main{margin:0;padding:0}.panel{break-inside:avoid}.table-wrap{max-height:none;overflow:visible}body{background:#fff}}
@@ -148,8 +157,11 @@ dialog::backdrop{background:rgba(15,23,42,.55)}
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap">
       <button class="button primary" id="btnToggle3DViewer">Open 3D Cloud Viewer (SVF2)</button>
+      <button class="button" id="btnOpenOfflineGlb" title="Open a local .GLB 3D file offline without ACC/APS connection">Open Offline .GLB</button>
+      <input type="file" id="glbFileInput" accept=".glb" class="hidden" />
       <button class="button" id="btnHeaderSheetSet">2D / PDF Sheet Set</button>
       <button class="button" id="btnHeaderTelegramBot">Telegram Query Bot (No-AI)</button>
+      <button class="button" id="btnExecutiveMode" title="Clean presentation layout for management and client reviews">Executive View</button>
       <button class="button" id="btnToggleCols">Configure Table Columns</button>
       <button class="button" id="print">Print / Export PDF</button>
     </div>
@@ -191,6 +203,7 @@ dialog::backdrop{background:rgba(15,23,42,.55)}
         <button type="button" class="chip-btn" id="btnColorIssues" title="Color elements with High/Medium IDS issues in Red/Amber">Heatmap: Issues</button>
         <button type="button" class="chip-btn" id="btnColorTeams" title="Color failing elements by Team (AR/ID/MEP/STR)">Heatmap: Teams</button>
         <button type="button" class="chip-btn" id="btnColorDiffs" title="Color Added/Modified elements">Heatmap: Diffs</button>
+        <button type="button" class="chip-btn" id="btnSyncSpatialDiff" title="Compare 3D world positions & bounding boxes against previous version to detect Moved/Resized elements">Check 3D Geo-Diff</button>
         <button type="button" class="chip-btn" id="btnReset3D">Reset 3D</button>
       </div>
       <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
@@ -198,7 +211,8 @@ dialog::backdrop{background:rgba(15,23,42,.55)}
         <button type="button" class="chip-btn" id="btnOpenSheetSetModal" title="Browse 2D Drawing Sheets, download Native Vector Cloud PDFs, or compile a Multi-Page PDF Sheet Set">PDF Sheet Set</button>
         <button type="button" class="chip-btn" id="btnExportSnapshotPng" title="Export high-res 2D/3D cropped view with Architect Coordination Titleblock (.PNG)">Crop Sheet (.PNG)</button>
         <button type="button" class="chip-btn" id="btnExportMeshObj" title="Extract 3D triangulated mesh of visible/isolated elements directly from SVF2 to .OBJ (for SketchUp/Blender/Rhino/CAD)">3D Mesh (.OBJ)</button>
-        <button type="button" class="chip-btn" id="btnExportRefIfc" title="Generate reference IFC4 model (.IFC) with 3D bounding solids and SQLite PropertySets (for BlenderBIM/BIMcollab/FreeCAD)">Reference (.IFC)</button>
+        <button type="button" class="chip-btn" id="btnExportMeshGlb" title="Export true 3D Binary glTF 2.0 (.GLB) with element metadata for Offline Viewer, Power BI 3DBI, Blender & Three.js">3D Mesh (.GLB)</button>
+        <button type="button" class="chip-btn" id="btnExportRefIfc" title="Generate true-geometry IFC4 model (.IFC) with IfcTriangulatedFaceSet and SQLite PropertySets (for BlenderBIM/BIMcollab/FreeCAD)">Reference (.IFC)</button>
       </div>
     </div>
 
@@ -383,6 +397,7 @@ dialog::backdrop{background:rgba(15,23,42,.55)}
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           <button id="exportPage" class="button">Export Current Page (CSV)</button>
           <button id="exportAll" class="button primary">Export Full Filtered Dataset (Wide CSV)</button>
+          <button id="btnExportRevitPatch" class="button" title="Export filtered elements as a roundtrip parameter_patch.json template for Revit Fix Assistant">Export Revit Patch (.JSON)</button>
         </div>
       </div>
 
@@ -1811,6 +1826,73 @@ function getTargetExportDbIds() {
   return ids.slice(0, 1500);
 }
 
+function extractSvf2ElementGeometry(dbId, viewerModel = apsViewer?.model) {
+  const positions = [];
+  const indices = [];
+  if (!viewerModel || typeof THREE === 'undefined') return { positions, indices };
+
+  const tree = viewerModel.getInstanceTree();
+  const fragList = viewerModel.getFragmentList();
+  const mat = new THREE.Matrix4();
+  const vMap = new Map();
+  let nextIdx = 0;
+
+  if (tree && fragList && Autodesk.Viewing.Private?.VertexBufferReader) {
+    tree.enumNodeFragments(dbId, (fragId) => {
+      fragList.getWorldMatrix(fragId, mat);
+      const geom = fragList.getGeometry(fragId);
+      if (!geom) return;
+      try {
+        const vbr = new Autodesk.Viewing.Private.VertexBufferReader(geom);
+        vbr.enumGeomsForObject(dbId, {
+          onTriangle: (x1, y1, z1, x2, y2, z2, x3, y3, z3) => {
+            const addV = (x, y, z) => {
+              const p = new THREE.Vector3(x, y, z).applyMatrix4(mat);
+              const key = p.x.toFixed(4) + ',' + p.y.toFixed(4) + ',' + p.z.toFixed(4);
+              let idx = vMap.get(key);
+              if (idx === undefined) {
+                idx = nextIdx++;
+                vMap.set(key, idx);
+                positions.push(p.x, p.y, p.z);
+              }
+              return idx;
+            };
+            const i1 = addV(x1, y1, z1);
+            const i2 = addV(x2, y2, z2);
+            const i3 = addV(x3, y3, z3);
+            if (i1 !== i2 && i2 !== i3 && i1 !== i3) {
+              indices.push(i1, i2, i3);
+            }
+          }
+        });
+      } catch { }
+    }, true);
+  }
+
+  // Fallback to exact 3D World Bounding Box if compressed SVF2 buffer is empty
+  if (positions.length === 0) {
+    const b = getElementWorldBoundingBox(dbId, viewerModel);
+    if (b) {
+      const x0 = b.min.x, y0 = b.min.y, z0 = b.min.z;
+      const x1 = b.max.x, y1 = b.max.y, z1 = b.max.z;
+      positions.push(
+        x0, y0, z0,  x1, y0, z0,  x1, y1, z0,  x0, y1, z0,
+        x0, y0, z1,  x1, y0, z1,  x1, y1, z1,  x0, y1, z1
+      );
+      indices.push(
+        0, 2, 1,  0, 3, 2,
+        4, 5, 6,  4, 6, 7,
+        0, 1, 5,  0, 5, 4,
+        1, 2, 6,  1, 6, 5,
+        2, 3, 7,  2, 7, 6,
+        3, 0, 4,  3, 4, 7
+      );
+    }
+  }
+
+  return { positions, indices };
+}
+
 function exportVisibleMeshObj() {
   if (!apsViewer || !apsViewer.model || typeof THREE === 'undefined') return;
   const targetDbIds = getTargetExportDbIds();
@@ -1821,8 +1903,6 @@ function exportVisibleMeshObj() {
 
   $('viewerStatusText').textContent = 'Extracting 3D mesh from SVF2 fragments for ' + fmt(targetDbIds.length) + ' element(s)...';
   const tree = apsViewer.model.getInstanceTree();
-  const fragList = apsViewer.model.getFragmentList();
-
   const lines = [
     '# Wavefront OBJ exported directly from ACC SVF2 via RBDE Coordination Studio',
     '# Elements exported: ' + targetDbIds.length
@@ -1832,74 +1912,14 @@ function exportVisibleMeshObj() {
   for (const dbId of targetDbIds) {
     const nodeName = (tree ? tree.getNodeName(dbId) : ('Element_' + dbId)).replace(/\s+/g, '_');
     lines.push('o ' + nodeName + '_dbId_' + dbId);
-
-    let wroteMeshVertices = false;
-    const mat = new THREE.Matrix4();
-
-    if (tree && fragList) {
-      tree.enumNodeFragments(dbId, (fragId) => {
-        fragList.getWorldMatrix(fragId, mat);
-        const geom = fragList.getGeometry(fragId);
-        if (geom && Autodesk.Viewing.Private && Autodesk.Viewing.Private.VertexBufferReader) {
-          try {
-            const vbr = new Autodesk.Viewing.Private.VertexBufferReader(geom);
-            const fragVerts = [];
-            const fragFaces = [];
-            const vMap = new Map();
-
-            vbr.enumGeomsForObject(dbId, {
-              onTriangle: (x1, y1, z1, x2, y2, z2, x3, y3, z3) => {
-                const addV = (x, y, z) => {
-                  const p = new THREE.Vector3(x, y, z).applyMatrix4(mat);
-                  const key = p.x.toFixed(4) + ',' + p.y.toFixed(4) + ',' + p.z.toFixed(4);
-                  let idx = vMap.get(key);
-                  if (!idx) {
-                    fragVerts.push('v ' + p.x.toFixed(4) + ' ' + p.y.toFixed(4) + ' ' + p.z.toFixed(4));
-                    idx = vertexOffset++;
-                    vMap.set(key, idx);
-                  }
-                  return idx;
-                };
-                const i1 = addV(x1, y1, z1);
-                const i2 = addV(x2, y2, z2);
-                const i3 = addV(x3, y3, z3);
-                if (i1 !== i2 && i2 !== i3 && i1 !== i3) {
-                  fragFaces.push('f ' + i1 + ' ' + i2 + ' ' + i3);
-                }
-              }
-            });
-
-            if (fragVerts.length > 0 && fragFaces.length > 0) {
-              lines.push(...fragVerts, ...fragFaces);
-              wroteMeshVertices = true;
-            }
-          } catch { }
-        }
-      }, true);
+    const { positions, indices } = extractSvf2ElementGeometry(dbId);
+    for (let i = 0; i < positions.length; i += 3) {
+      lines.push(`v ${positions[i].toFixed(4)} ${positions[i + 1].toFixed(4)} ${positions[i + 2].toFixed(4)}`);
     }
-
-    // Fallback: write exact 3D World Bounding Box solid if compressed SVF2 buffer is locked
-    if (!wroteMeshVertices) {
-      const b = getElementWorldBoundingBox(dbId);
-      if (b) {
-        const x0 = b.min.x.toFixed(4), y0 = b.min.y.toFixed(4), z0 = b.min.z.toFixed(4);
-        const x1 = b.max.x.toFixed(4), y1 = b.max.y.toFixed(4), z1 = b.max.z.toFixed(4);
-        lines.push(
-          `v ${x0} ${y0} ${z0}`, `v ${x1} ${y0} ${z0}`, `v ${x1} ${y1} ${z0}`, `v ${x0} ${y1} ${z0}`,
-          `v ${x0} ${y0} ${z1}`, `v ${x1} ${y0} ${z1}`, `v ${x1} ${y1} ${z1}`, `v ${x0} ${y1} ${z1}`
-        );
-        const o = vertexOffset;
-        lines.push(
-          `f ${o} ${o+2} ${o+1}`, `f ${o} ${o+3} ${o+2}`,
-          `f ${o+4} ${o+5} ${o+6}`, `f ${o+4} ${o+6} ${o+7}`,
-          `f ${o} ${o+1} ${o+5}`, `f ${o} ${o+5} ${o+4}`,
-          `f ${o+1} ${o+2} ${o+6}`, `f ${o+1} ${o+6} ${o+5}`,
-          `f ${o+2} ${o+3} ${o+7}`, `f ${o+2} ${o+7} ${o+6}`,
-          `f ${o+3} ${o} ${o+4}`, `f ${o+3} ${o+4} ${o+7}`
-        );
-        vertexOffset += 8;
-      }
+    for (let i = 0; i < indices.length; i += 3) {
+      lines.push(`f ${indices[i] + vertexOffset} ${indices[i + 1] + vertexOffset} ${indices[i + 2] + vertexOffset}`);
     }
+    vertexOffset += positions.length / 3;
   }
 
   const blob = new Blob([lines.join('\n')], { type: 'text/plain;charset=utf-8' });
@@ -1910,8 +1930,140 @@ function exportVisibleMeshObj() {
   $('viewerStatusText').textContent = 'Exported 3D Mesh (.OBJ) for ' + fmt(targetDbIds.length) + ' element(s) (opens in Blender, SketchUp, Rhino, CAD).';
 }
 
+function exportBinaryGlb() {
+  if (!apsViewer || !apsViewer.model || typeof THREE === 'undefined') {
+    $('viewerStatusText').textContent = 'Load a 3D model first to export .GLB.';
+    return;
+  }
+  const targetDbIds = getTargetExportDbIds();
+  if (!targetDbIds.length) {
+    $('viewerStatusText').textContent = 'Select or isolate elements in 3D first to export .GLB.';
+    return;
+  }
+
+  $('viewerStatusText').textContent = 'Compiling Binary glTF 2.0 (.GLB) for ' + fmt(targetDbIds.length) + ' element(s)...';
+  const tree = apsViewer.model.getInstanceTree();
+
+  const binChunks = [];
+  let binByteOffset = 0;
+  const bufferViews = [];
+  const accessors = [];
+  const meshes = [];
+  const nodes = [];
+  const rootChildren = [];
+
+  const pad4 = (len) => (4 - (len % 4)) % 4;
+
+  for (const dbId of targetDbIds) {
+    const { positions, indices } = extractSvf2ElementGeometry(dbId);
+    if (positions.length === 0 || indices.length === 0) continue;
+
+    // Convert Z-up (Revit/SVF2) to Y-up (glTF standard): (x, z, -y)
+    const posArr = new Float32Array(positions.length);
+    let minX = Infinity, minY = Infinity, minZ = Infinity;
+    let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+    for (let i = 0; i < positions.length; i += 3) {
+      const gx = positions[i];
+      const gy = positions[i + 2];
+      const gz = -positions[i + 1];
+      posArr[i] = gx; posArr[i + 1] = gy; posArr[i + 2] = gz;
+      if (gx < minX) minX = gx; if (gy < minY) minY = gy; if (gz < minZ) minZ = gz;
+      if (gx > maxX) maxX = gx; if (gy > maxY) maxY = gy; if (gz > maxZ) maxZ = gz;
+    }
+
+    const idxArr = new Uint32Array(indices);
+    const posBytes = new Uint8Array(posArr.buffer);
+    const idxBytes = new Uint8Array(idxArr.buffer);
+
+    const posViewIdx = bufferViews.length;
+    bufferViews.push({ buffer: 0, byteOffset: binByteOffset, byteLength: posBytes.byteLength, target: 34962 });
+    binChunks.push(posBytes);
+    binByteOffset += posBytes.byteLength;
+    const posPad = pad4(binByteOffset);
+    if (posPad) { binChunks.push(new Uint8Array(posPad)); binByteOffset += posPad; }
+
+    const idxViewIdx = bufferViews.length;
+    bufferViews.push({ buffer: 0, byteOffset: binByteOffset, byteLength: idxBytes.byteLength, target: 34963 });
+    binChunks.push(idxBytes);
+    binByteOffset += idxBytes.byteLength;
+    const idxPad = pad4(binByteOffset);
+    if (idxPad) { binChunks.push(new Uint8Array(idxPad)); binByteOffset += idxPad; }
+
+    const posAccIdx = accessors.length;
+    accessors.push({ bufferView: posViewIdx, componentType: 5126, count: positions.length / 3, type: 'VEC3', min: [minX, minY, minZ], max: [maxX, maxY, maxZ] });
+    const idxAccIdx = accessors.length;
+    accessors.push({ bufferView: idxViewIdx, componentType: 5125, count: indices.length, type: 'SCALAR' });
+
+    const meshIdx = meshes.length;
+    meshes.push({ primitives: [{ attributes: { POSITION: posAccIdx }, indices: idxAccIdx, material: 0 }] });
+
+    const nodeName = tree ? (tree.getNodeName(dbId) || ('Element_' + dbId)) : ('Element_' + dbId);
+    const nodeIdx = nodes.length;
+    nodes.push({ name: nodeName, mesh: meshIdx, extras: { dbId } });
+    rootChildren.push(nodeIdx);
+  }
+
+  if (nodes.length === 0) {
+    $('viewerStatusText').textContent = 'No triangulated mesh geometry found for the selected elements.';
+    return;
+  }
+
+  const gltf = {
+    asset: { version: '2.0', generator: 'RBDE SVF2-to-GLB Exporter' },
+    scene: 0,
+    scenes: [{ nodes: rootChildren }],
+    nodes,
+    meshes,
+    materials: [{
+      name: 'RBDE_Coordination_Mat',
+      pbrMetallicRoughness: { baseColorFactor: [0.82, 0.87, 0.91, 1.0], metallicFactor: 0.1, roughnessFactor: 0.7 },
+      doubleSided: true
+    }],
+    accessors,
+    bufferViews,
+    buffers: [{ byteLength: binByteOffset }]
+  };
+
+  const jsonBytesRaw = new TextEncoder().encode(JSON.stringify(gltf));
+  const jsonPad = pad4(jsonBytesRaw.byteLength);
+  const jsonChunkLen = jsonBytesRaw.byteLength + jsonPad;
+  const totalByteLen = 12 + 8 + jsonChunkLen + 8 + binByteOffset;
+
+  const glbBuf = new ArrayBuffer(totalByteLen);
+  const dv = new DataView(glbBuf);
+  const out = new Uint8Array(glbBuf);
+
+  // Header
+  dv.setUint32(0, 0x46546C67, true); // 'glTF'
+  dv.setUint32(4, 2, true);
+  dv.setUint32(8, totalByteLen, true);
+
+  // JSON Chunk
+  dv.setUint32(12, jsonChunkLen, true);
+  dv.setUint32(16, 0x4E4F534A, true); // 'JSON'
+  out.set(jsonBytesRaw, 20);
+  for (let i = 0; i < jsonPad; i++) out[20 + jsonBytesRaw.byteLength + i] = 0x20;
+
+  // BIN Chunk
+  const binHeaderPos = 20 + jsonChunkLen;
+  dv.setUint32(binHeaderPos, binByteOffset, true);
+  dv.setUint32(binHeaderPos + 4, 0x004E4942, true); // 'BIN\0'
+  let writePtr = binHeaderPos + 8;
+  for (const chunk of binChunks) {
+    out.set(chunk, writePtr);
+    writePtr += chunk.byteLength;
+  }
+
+  const blob = new Blob([glbBuf], { type: 'model/gltf-binary' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'rbde-coordination-model-' + nodes.length + 'el.glb';
+  a.click();
+  $('viewerStatusText').textContent = 'Exported Binary glTF 2.0 (.GLB) for ' + fmt(nodes.length) + ' element(s) (works in Offline Viewer, Power BI 3DBI, Blender).';
+}
+
 async function exportReferenceIfc() {
-  $('viewerStatusText').textContent = 'Generating IFC4 Coordination Reference (.IFC) with 3D solids & SQLite properties...';
+  $('viewerStatusText').textContent = 'Generating true-geometry IFC4 Model (.IFC) with IfcTriangulatedFaceSet & SQLite properties...';
   try {
     const p = new URLSearchParams(applied);
     p.set('page', 0);
@@ -1960,38 +2112,56 @@ async function exportReferenceIfc() {
     );
 
     const productRefs = [];
+    let trueMeshCount = 0;
+
     for (const r of elemRows) {
       if (r.kind !== 'instance') continue;
       const dbId = Number(r.object_id || 0);
-      const wBox = dbId > 0 ? getElementWorldBoundingBox(dbId) : null;
+      const geom = dbId > 0 && apsViewer?.model ? extractSvf2ElementGeometry(dbId) : { positions: [], indices: [] };
 
-      // Default 1m x 1m x 1m box if 3D viewer wasn't loaded yet, or exact 3D World Bounding Box from SVF2
-      const minX = wBox ? wBox.min.x : 0, minY = wBox ? wBox.min.y : 0, minZ = wBox ? wBox.min.z : 0;
-      const dx = Math.max(0.1, wBox ? (wBox.max.x - wBox.min.x) : 1.0);
-      const dy = Math.max(0.1, wBox ? (wBox.max.y - wBox.min.y) : 1.0);
-      const dz = Math.max(0.1, wBox ? (wBox.max.z - wBox.min.z) : 1.0);
-      const cx = (minX + dx / 2).toFixed(4);
-      const cy = (minY + dy / 2).toFixed(4);
-      const cz = minZ.toFixed(4);
-
-      const ptId = nextId();
-      const axId = nextId();
       const plId = nextId();
-      const profId = nextId();
-      const solidId = nextId();
       const shapeId = nextId();
       const prodShapeId = nextId();
       const elemId = nextId();
 
-      ifcStep.push(
-        `${ptId}=IFCCARTESIANPOINT((${cx},${cy},${cz}));`,
-        `${axId}=IFCAXIS2PLACEMENT3D(${ptId},#12,#10);`,
-        `${plId}=IFCLOCALPLACEMENT(#25,${axId});`,
-        `${profId}=IFCRECTANGLEPROFILEDEF(.AREA.,$,$,${dx.toFixed(4)},${dy.toFixed(4)});`,
-        `${solidId}=IFCEXTRUDEDAREASOLID(${profId},#14,#12,${dz.toFixed(4)});`,
-        `${shapeId}=IFCSHAPEREPRESENTATION(#15,'Body','SweptSolid',(${solidId}));`,
-        `${prodShapeId}=IFCPRODUCTDEFINITIONSHAPE($,$,(${shapeId}));`
-      );
+      if (geom.positions.length >= 9 && geom.indices.length >= 3 && geom.indices.length <= 24000) {
+        // True SVF2 Triangulated Geometry (IfcTriangulatedFaceSet)
+        trueMeshCount++;
+        const ptsTuples = [];
+        for (let i = 0; i < geom.positions.length; i += 3) {
+          ptsTuples.push(`(${geom.positions[i].toFixed(4)},${geom.positions[i+1].toFixed(4)},${geom.positions[i+2].toFixed(4)})`);
+        }
+        const faceTuples = [];
+        for (let i = 0; i < geom.indices.length; i += 3) {
+          faceTuples.push(`(${geom.indices[i]+1},${geom.indices[i+1]+1},${geom.indices[i+2]+1})`);
+        }
+        const ptListId = nextId();
+        const faceSetId = nextId();
+        ifcStep.push(
+          `${plId}=IFCLOCALPLACEMENT(#25,#14);`,
+          `${ptListId}=IFCCARTESIANPOINTLIST3D((${ptsTuples.join(',')}));`,
+          `${faceSetId}=IFCTRIANGULATEDFACESET(${ptListId},$,.T.,(${faceTuples.join(',')}),$);`,
+          `${shapeId}=IFCSHAPEREPRESENTATION(#15,'Body','Tessellation',(${faceSetId}));`,
+          `${prodShapeId}=IFCPRODUCTDEFINITIONSHAPE($,$,(${shapeId}));`
+        );
+      } else {
+        // Bounding Box Solid Fallback
+        const wBox = dbId > 0 ? getElementWorldBoundingBox(dbId) : null;
+        const minX = wBox ? wBox.min.x : 0, minY = wBox ? wBox.min.y : 0, minZ = wBox ? wBox.min.z : 0;
+        const dx = Math.max(0.1, wBox ? (wBox.max.x - wBox.min.x) : 1.0);
+        const dy = Math.max(0.1, wBox ? (wBox.max.y - wBox.min.y) : 1.0);
+        const dz = Math.max(0.1, wBox ? (wBox.max.z - wBox.min.z) : 1.0);
+        const ptId = nextId(), axId = nextId(), profId = nextId(), solidId = nextId();
+        ifcStep.push(
+          `${ptId}=IFCCARTESIANPOINT((${(minX + dx / 2).toFixed(4)},${(minY + dy / 2).toFixed(4)},${minZ.toFixed(4)}));`,
+          `${axId}=IFCAXIS2PLACEMENT3D(${ptId},#12,#10);`,
+          `${plId}=IFCLOCALPLACEMENT(#25,${axId});`,
+          `${profId}=IFCRECTANGLEPROFILEDEF(.AREA.,$,$,${dx.toFixed(4)},${dy.toFixed(4)});`,
+          `${solidId}=IFCEXTRUDEDAREASOLID(${profId},#14,#12,${dz.toFixed(4)});`,
+          `${shapeId}=IFCSHAPEREPRESENTATION(#15,'Body','SweptSolid',(${solidId}));`,
+          `${prodShapeId}=IFCPRODUCTDEFINITIONSHAPE($,$,(${shapeId}));`
+        );
+      }
 
       const cat = (r.category || '').toLowerCase();
       let ifcClass = 'IFCBUILDINGELEMENTPROXY';
@@ -2007,13 +2177,13 @@ async function exportReferenceIfc() {
       const tag = cleanIfcStr(r.element_id);
 
       if (ifcClass === 'IFCDOOR' || ifcClass === 'IFCWINDOW') {
-        ifcStep.push(`${elemId}=${ifcClass}('${guid}',#5,'${fullName}','${cleanIfcStr(r.category)}',$,${plId},${prodShapeId},'${tag}',${dz.toFixed(3)},${dx.toFixed(3)},$,$,$);`);
+        ifcStep.push(`${elemId}=${ifcClass}('${guid}',#5,'${fullName}','${cleanIfcStr(r.category)}',$,${plId},${prodShapeId},'${tag}',2.1,0.9,$,$,$);`);
       } else {
         ifcStep.push(`${elemId}=${ifcClass}('${guid}',#5,'${fullName}','${cleanIfcStr(r.category)}',$,${plId},${prodShapeId},'${tag}',.NOTDEFINED.);`);
       }
       productRefs.push(elemId);
 
-      // Attach SQLite PropertySet (Pset_RBDE_Extracted)
+      // Attach SQLite PropertySet (Pset_RBDE_Parameters)
       const pMap = r.params || {};
       const propIds = [];
       for (const [k, v] of Object.entries(pMap)) {
@@ -2043,9 +2213,9 @@ async function exportReferenceIfc() {
     const blob = new Blob([ifcStep.join('\r\n')], { type: 'application/x-step' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = 'rbde-coordination-reference-' + productRefs.length + 'el.ifc';
+    a.download = 'rbde-true-geometry-' + productRefs.length + 'el.ifc';
     a.click();
-    $('viewerStatusText').textContent = 'Exported IFC4 Reference Model (.IFC) with ' + fmt(productRefs.length) + ' element(s) & SQLite PropertySets.';
+    $('viewerStatusText').textContent = `Exported IFC4 (.IFC) with ${fmt(productRefs.length)} element(s) (${fmt(trueMeshCount)} true triangulated meshes + SQLite PropertySets).`;
   } catch (e) {
     $('viewerStatusText').textContent = 'IFC Export error: ' + e.message;
   }
@@ -2167,7 +2337,249 @@ $('btnIsolateSelected3D').onclick = async () => {
 
 $('btnExportSnapshotPng').onclick = exportAnnotatedSnapshotPng;
 $('btnExportMeshObj').onclick = exportVisibleMeshObj;
+$('btnExportMeshGlb').onclick = exportBinaryGlb;
 $('btnExportRefIfc').onclick = exportReferenceIfc;
+
+$('btnExecutiveMode').onclick = () => {
+  const active = document.body.classList.toggle('executive-mode');
+  $('btnExecutiveMode').classList.toggle('primary', active);
+  $('btnExecutiveMode').textContent = active ? 'Exit Executive View' : 'Executive View';
+  if (apsViewer) setTimeout(() => apsViewer.resize(), 180);
+};
+
+$('btnExportRevitPatch').onclick = async () => {
+  const p = new URLSearchParams(applied);
+  p.set('page', 0);
+  p.set('limit', 1000);
+  p.set('columns', activeColumns.join(','));
+  const data = await api('elements', p);
+  const rows = (data.rows || []).filter(r => r.kind === 'instance');
+  const targetParam = applied.get('parameter') || activeColumns[0] || 'Comments';
+  const patch = {
+    schema: 'RBDE-ParameterPatch-1.0',
+    generatedUtc: new Date().toISOString(),
+    targetParameter: targetParam,
+    items: rows.map(r => ({
+      ElementId: Number(r.element_id),
+      UniqueId: r.unique_id || '',
+      ModelName: base(r.path || ''),
+      Category: r.category || '',
+      Family: r.family || '',
+      TypeName: r.type_name || '',
+      ParameterName: targetParam,
+      CurrentValue: (r.params && r.params[targetParam]) || '',
+      NewValue: (r.params && r.params[targetParam]) || ''
+    }))
+  };
+  const blob = new Blob([JSON.stringify(patch, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'parameter_patch.json';
+  a.click();
+};
+
+$('btnSyncSpatialDiff').onclick = async () => {
+  if (!apsViewer || !apsViewer.model) {
+    $('viewerStatusText').textContent = 'Load a 3D model first to run 3D Geometric Diff.';
+    return;
+  }
+  const mId = Number(loadedViewerModelId || $('viewerModelSelect').value || 1);
+  const mObj = (overview?.models || []).find(m => Number(m.model_id) === mId);
+  const modelKey = (mObj?.lineage_id || mObj?.path || ('model-' + mId));
+
+  $('viewerStatusText').textContent = 'Extracting 3D world bounding boxes from SVF2 to detect Moved / Resized elements...';
+  const p = new URLSearchParams({ model: String(mId), kind: 'instance', page: '0', limit: '3000' });
+  const data = await api('elements', p);
+  const boxes = [];
+  for (const r of (data.rows || [])) {
+    const dbId = Number(r.object_id || 0);
+    if (dbId <= 0) continue;
+    const wb = getElementWorldBoundingBox(dbId, apsViewer.model);
+    if (!wb) continue;
+    boxes.push({
+      uniqueId: r.unique_id || '',
+      elementId: Number(r.element_id || 0),
+      category: r.category || '',
+      family: r.family || '',
+      typeName: r.type_name || '',
+      minX: wb.min.x, minY: wb.min.y, minZ: wb.min.z,
+      maxX: wb.max.x, maxY: wb.max.y, maxZ: wb.max.z
+    });
+  }
+
+  if (!boxes.length) {
+    $('viewerStatusText').textContent = 'No mapped 3D element bounding boxes found for geometric diff.';
+    return;
+  }
+
+  const resp = await fetch('api/spatial-diffs', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ modelId: mId, modelKey, boxes })
+  });
+  const res = await resp.json();
+  if (!resp.ok) {
+    $('viewerStatusText').textContent = 'Geo-Diff error: ' + (res.error || resp.statusText);
+    return;
+  }
+
+  if (res.baselineCreated) {
+    $('viewerStatusText').textContent = `Saved 3D spatial baseline for ${fmt(res.checkedCount)} elements. Run again after next model update to detect Moved/Resized elements.`;
+  } else {
+    $('viewerStatusText').textContent = `3D Geo-Diff complete (${fmt(res.checkedCount)} checked): ${res.movedCount} Moved, ${res.resizedCount} GeometryChanged.`;
+    if ((res.movedCount + res.resizedCount) > 0) {
+      await loadDiffs();
+      await apply3DHeatmap('diffs');
+    }
+  }
+};
+
+// Pure WebGL2 Offline .GLB Viewer (Zero Internet / Zero ACC / Zero External CDN)
+$('btnOpenOfflineGlb').onclick = () => $('glbFileInput').click();
+$('glbFileInput').onchange = async (ev) => {
+  const file = ev.target.files?.[0];
+  ev.target.value = '';
+  if (!file) return;
+
+  const dock = $('viewerDock');
+  dock.classList.remove('hidden');
+  $('btnToggle3DViewer').textContent = 'Hide 3D Cloud Viewer';
+  $('viewerStatusText').textContent = 'Rendering Offline .GLB: ' + file.name + '...';
+
+  const buf = await file.arrayBuffer();
+  const dv = new DataView(buf);
+  if (dv.getUint32(0, true) !== 0x46546C67) {
+    $('viewerStatusText').textContent = 'Invalid .GLB binary file.';
+    return;
+  }
+
+  const jsonLen = dv.getUint32(12, true);
+  const jsonText = new TextDecoder().decode(new Uint8Array(buf, 20, jsonLen));
+  const gltf = JSON.parse(jsonText);
+  const binOffset = 20 + jsonLen + 8;
+
+  const allTris = [];
+  let minX = Infinity, minY = Infinity, minZ = Infinity, maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+
+  for (const mesh of (gltf.meshes || [])) {
+    for (const prim of (mesh.primitives || [])) {
+      const posAcc = gltf.accessors[prim.attributes.POSITION];
+      const posBv = gltf.bufferViews[posAcc.bufferView];
+      const posArr = new Float32Array(buf, binOffset + (posBv.byteOffset || 0) + (posAcc.byteOffset || 0), posAcc.count * 3);
+
+      let idxArr;
+      if (prim.indices !== undefined) {
+        const idxAcc = gltf.accessors[prim.indices];
+        const idxBv = gltf.bufferViews[idxAcc.bufferView];
+        const byteStart = binOffset + (idxBv.byteOffset || 0) + (idxAcc.byteOffset || 0);
+        idxArr = idxAcc.componentType === 5123
+          ? new Uint16Array(buf, byteStart, idxAcc.count)
+          : new Uint32Array(buf, byteStart, idxAcc.count);
+      } else {
+        idxArr = Array.from({ length: posAcc.count }, (_, i) => i);
+      }
+
+      for (let i = 0; i < posArr.length; i += 3) {
+        const x = posArr[i], y = posArr[i + 1], z = posArr[i + 2];
+        if (x < minX) minX = x; if (y < minY) minY = y; if (z < minZ) minZ = z;
+        if (x > maxX) maxX = x; if (y > maxY) maxY = y; if (z > maxZ) maxZ = z;
+      }
+
+      const triPos = new Float32Array(idxArr.length * 3);
+      for (let i = 0; i < idxArr.length; i++) {
+        const vi = idxArr[i] * 3;
+        triPos[i * 3] = posArr[vi];
+        triPos[i * 3 + 1] = posArr[vi + 1];
+        triPos[i * 3 + 2] = posArr[vi + 2];
+      }
+      allTris.push(triPos);
+    }
+  }
+
+  const totalFloats = allTris.reduce((s, a) => s + a.length, 0);
+  const merged = new Float32Array(totalFloats);
+  let off = 0;
+  for (const a of allTris) { merged.set(a, off); off += a.length; }
+
+  const container = $('apsViewerContainer');
+  container.innerHTML = '';
+  const canvas = document.createElement('canvas');
+  canvas.style.cssText = 'width:100%;height:100%;display:block;cursor:grab;background:#0f172a;';
+  container.appendChild(canvas);
+
+  const gl = canvas.getContext('webgl2') || canvas.getContext('webgl');
+  if (!gl) { $('viewerStatusText').textContent = 'WebGL not available in this browser.'; return; }
+
+  const vsSrc = `attribute vec3 aPos; uniform mat4 uMvp; varying vec3 vPos; void main(){ vPos = aPos; gl_Position = uMvp * vec4(aPos, 1.0); }`;
+  const fsSrc = `precision mediump float; varying vec3 vPos; void main(){ float shade = 0.55 + 0.35 * sin(vPos.y * 0.5) + 0.1 * cos(vPos.x * 0.5); gl_FragColor = vec4(0.55 * shade, 0.78 * shade, 0.88 * shade, 1.0); }`;
+  const compile = (type, src) => { const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s); return s; };
+  const prog = gl.createProgram();
+  gl.attachShader(prog, compile(gl.VERTEX_SHADER, vsSrc));
+  gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, fsSrc));
+  gl.linkProgram(prog);
+  gl.useProgram(prog);
+
+  const vbo = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+  gl.bufferData(gl.ARRAY_BUFFER, merged, gl.STATIC_DRAW);
+  const aPos = gl.getAttribLocation(prog, 'aPos');
+  gl.enableVertexAttribArray(aPos);
+  gl.vertexAttribPointer(aPos, 3, gl.FLOAT, false, 0, 0);
+  const uMvp = gl.getUniformLocation(prog, 'uMvp');
+
+  const cx = (minX + maxX) * 0.5, cy = (minY + maxY) * 0.5, cz = (minZ + maxZ) * 0.5;
+  const radius = Math.max(1, Math.hypot(maxX - minX, maxY - minY, maxZ - minZ) * 0.6);
+  let yaw = 0.65, pitch = 0.45, dist = radius * 2.2, dragging = false, lx = 0, ly = 0;
+
+  canvas.onmousedown = (e) => { dragging = true; lx = e.clientX; ly = e.clientY; canvas.style.cursor = 'grabbing'; };
+  window.addEventListener('mouseup', () => { dragging = false; canvas.style.cursor = 'grab'; });
+  window.addEventListener('mousemove', (e) => {
+    if (!dragging) return;
+    yaw += (e.clientX - lx) * 0.008;
+    pitch = Math.max(-1.4, Math.min(1.4, pitch + (e.clientY - ly) * 0.008));
+    lx = e.clientX; ly = e.clientY;
+    draw();
+  });
+  canvas.onwheel = (e) => { e.preventDefault(); dist = Math.max(radius * 0.25, dist * (e.deltaY > 0 ? 1.12 : 0.88)); draw(); };
+
+  function mulMat4(a, b) {
+    const r = new Float32Array(16);
+    for (let c = 0; c < 4; c++) for (let row = 0; row < 4; row++)
+      r[c * 4 + row] = a[row] * b[c * 4] + a[4 + row] * b[c * 4 + 1] + a[8 + row] * b[c * 4 + 2] + a[12 + row] * b[c * 4 + 3];
+    return r;
+  }
+  function draw() {
+    canvas.width = container.clientWidth || 900;
+    canvas.height = container.clientHeight || 520;
+    gl.viewport(0, 0, canvas.width, canvas.height);
+    gl.enable(gl.DEPTH_TEST);
+    gl.clearColor(0.06, 0.09, 0.16, 1.0);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+    const aspect = canvas.width / Math.max(1, canvas.height);
+    const f = 1.0 / Math.tan(0.45), near = Math.max(0.05, dist * 0.01), far = dist * 10;
+    const proj = new Float32Array([f / aspect, 0, 0, 0, 0, f, 0, 0, 0, 0, (far + near) / (near - far), -1, 0, 0, (2 * far * near) / (near - far), 0]);
+
+    const ex = cx + dist * Math.cos(pitch) * Math.sin(yaw);
+    const ey = cy + dist * Math.sin(pitch);
+    const ez = cz + dist * Math.cos(pitch) * Math.cos(yaw);
+    let zx = ex - cx, zy = ey - cy, zz = ez - cz;
+    const zl = Math.hypot(zx, zy, zz) || 1; zx /= zl; zy /= zl; zz /= zl;
+    let xx = zz, xy = 0, xz = -zx;
+    const xl = Math.hypot(xx, xy, xz) || 1; xx /= xl; xy /= xl; xz /= xl;
+    const yx = zy * xz - zz * xy, yy = zz * xx - zx * xz, yz = zx * xy - zy * xx;
+    const view = new Float32Array([
+      xx, yx, zx, 0,
+      xy, yy, zy, 0,
+      xz, yz, zz, 0,
+      -(xx * ex + xy * ey + xz * ez), -(yx * ex + yy * ey + yz * ez), -(zx * ex + zy * ey + zz * ez), 1
+    ]);
+    gl.uniformMatrix4fv(uMvp, false, mulMat4(proj, view));
+    gl.drawArrays(gl.TRIANGLES, 0, merged.length / 3);
+  }
+  draw();
+  $('viewerStatusText').textContent = `Offline .GLB Mode: ${file.name} (${fmt(merged.length / 9)} triangles) — Drag to Orbit, Scroll to Zoom (100% Offline).`;
+};
 
 let currentManifestData = null;
 
