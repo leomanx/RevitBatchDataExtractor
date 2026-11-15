@@ -118,6 +118,24 @@ dialog::backdrop{background:rgba(15,23,42,.55)}
 .col-pill{display:inline-flex;align-items:center;gap:5px;background:#fff;border:1px solid #cbd5e1;border-radius:5px;padding:3px 8px;font-size:11.5px;cursor:pointer;user-select:none}
 .col-pill input{width:auto;margin:0;padding:0}
 .col-pill.checked{background:#f0fdfa;border-color:#0d9488;color:#0f766e;font-weight:600}
+body.dark-theme{--ink:#e2e8f0;--muted:#94a3b8;--bg:#0b1120;--line:#1e293b;--panel:#111827;--nav:#060a14}
+body.dark-theme h1,body.dark-theme h2{color:#f8fafc}
+body.dark-theme .panel,body.dark-theme .card,body.dark-theme dialog{background:#111827;border-color:#1e293b;color:#e2e8f0}
+body.dark-theme .button{background:#1e293b;border-color:#334155;color:#e2e8f0}
+body.dark-theme .button:hover:not(:disabled){background:#334155;border-color:#475569}
+body.dark-theme .button.primary{background:#0d9488;border-color:#0d9488;color:#fff}
+body.dark-theme input,body.dark-theme select,body.dark-theme textarea{background:#0f172a;border-color:#334155;color:#f1f5f9}
+body.dark-theme th{background:#0f172a;color:#94a3b8;border-color:#1e293b}
+body.dark-theme td{border-color:#1e293b;color:#cbd5e1}
+body.dark-theme tr:hover td{background:#1e293b}
+body.dark-theme .col-picker{background:#0f172a;border-color:#1e293b}
+body.dark-theme .col-pill{background:#1e293b;border-color:#334155;color:#cbd5e1}
+body.dark-theme .col-pill.checked{background:#042f2e;border-color:#14b8a6;color:#5eead4}
+body.dark-theme .coverage-bar{background:#0c4a6e;color:#e0f2fe}
+body.dark-theme .chip-btn{background:#1e293b;border-color:#334155;color:#cbd5e1}
+body.dark-theme .chip-btn:hover{background:#334155;color:#fff}
+body.dark-theme .chip-btn.active{background:#042f2e;border-color:#14b8a6;color:#5eead4}
+body.dark-theme .bar-track{background:#1e293b}
 body.executive-mode aside,
 body.executive-mode #filters,
 body.executive-mode .col-picker,
@@ -156,14 +174,15 @@ body.executive-mode .viewer-canvas-wrap{height:600px}
       <p id="run" class="muted">Loading batch database...</p>
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap">
-      <button class="button primary" id="btnToggle3DViewer">Open 3D Cloud Viewer (SVF2)</button>
+      <button class="button primary" id="btnToggle3DViewer" title="Open embedded 60fps Autodesk Cloud 2D/3D Viewer (SVF2)">Open 3D Cloud Viewer (SVF2)</button>
       <button class="button" id="btnOpenOfflineGlb" title="Open a local .GLB 3D file offline without ACC/APS connection">Open Offline .GLB</button>
       <input type="file" id="glbFileInput" accept=".glb" class="hidden" />
-      <button class="button" id="btnHeaderSheetSet">2D / PDF Sheet Set</button>
-      <button class="button" id="btnHeaderTelegramBot">Telegram Query Bot (No-AI)</button>
+      <button class="button" id="btnHeaderSheetSet" title="Browse 2D Drawing Sheets, download Native Cloud Vector PDFs, or compile A3 PDF Sheet Sets">2D / PDF Sheet Set</button>
+      <button class="button" id="btnHeaderTelegramBot" title="Configure & test Zero-AI Telegram BIM & QTO Query Bot">Telegram Query Bot (No-AI)</button>
       <button class="button" id="btnExecutiveMode" title="Clean presentation layout for management and client reviews">Executive View</button>
-      <button class="button" id="btnToggleCols">Configure Table Columns</button>
-      <button class="button" id="print">Print / Export PDF</button>
+      <button class="button" id="btnThemeToggle" title="Switch between Dark Theme (eye-comfort) and Light Theme">Dark Theme</button>
+      <button class="button" id="btnToggleCols" title="Select which Revit parameters appear as columns in the table">Configure Table Columns</button>
+      <button class="button" id="print" title="Print current dashboard view or save as PDF">Print / Export PDF</button>
     </div>
   </header>
 
@@ -193,26 +212,42 @@ body.executive-mode .viewer-canvas-wrap{height:600px}
 
     <!-- Coordination Camera, Section & Zero-License Export Subbar -->
     <div class="viewer-subbar">
-      <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-        <span style="font-size:11px;color:#94a3b8;font-weight:600;text-transform:uppercase">View / Section:</span>
-        <button type="button" class="chip-btn" id="btnOrthoTop" title="Switch to True-Scale Orthographic Top Plan View">2D Plan (Top Ortho)</button>
-        <button type="button" class="chip-btn" id="btnOrthoFront" title="Switch to True-Scale Orthographic Front Elevation">Front Elev (Ortho)</button>
-        <button type="button" class="chip-btn" id="btnPersp3D" title="Switch to 3D Perspective Isometric">3D Perspective</button>
-        <button type="button" class="chip-btn" id="btnToggleSectionBox" title="Toggle interactive 3D Section Plane / Box">Cut Section Box</button>
-        <span style="color:#475569">|</span>
-        <button type="button" class="chip-btn" id="btnColorIssues" title="Color elements with High/Medium IDS issues in Red/Amber">Heatmap: Issues</button>
-        <button type="button" class="chip-btn" id="btnColorTeams" title="Color failing elements by Team (AR/ID/MEP/STR)">Heatmap: Teams</button>
-        <button type="button" class="chip-btn" id="btnColorDiffs" title="Color Added/Modified elements">Heatmap: Diffs</button>
-        <button type="button" class="chip-btn" id="btnSyncSpatialDiff" title="Compare 3D world positions & bounding boxes against previous version to detect Moved/Resized elements">Check 3D Geo-Diff</button>
-        <button type="button" class="chip-btn" id="btnReset3D">Reset 3D</button>
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <select id="viewerCameraSelect" title="Switch Camera Angle: True-Scale Orthographic Plans/Elevations (Top, Front, Rear, Left, Right), 3D Isometric, or Auto-Align Perpendicular to angled/slanted buildings & selected walls." style="width:230px;margin:0;padding:4px 8px;font-size:12px;background:#1e293b;color:#f8fafc;border-color:#334155">
+          <option value="iso" title="3D Perspective Isometric overview">Camera: 3D Isometric (Persp)</option>
+          <option value="top" title="Orthographic Top-Down 2D Plan view (-Z)">2D Plan: Top (Ortho)</option>
+          <option value="front" title="Orthographic Front Elevation (-Y to +Y)">Elevation: Front (Ortho)</option>
+          <option value="rear" title="Orthographic Rear / Back Elevation (+Y to -Y)">Elevation: Rear / Back (Ortho)</option>
+          <option value="left" title="Orthographic Left Side Elevation (-X to +X)">Elevation: Left Side (Ortho)</option>
+          <option value="right" title="Orthographic Right Side Elevation (+X to -X)">Elevation: Right Side (Ortho)</option>
+          <option value="perp" title="Automatically computes the dominant face/edge normal of the selected element (or whole model) and aligns the Orthographic camera perpendicular to slanted buildings">Auto-Align Perpendicular (Slanted)</option>
+        </select>
+
+        <button type="button" class="chip-btn" id="btnToggleSectionBox" title="Toggle 3D Section Box. If an element is selected, cuts a tight box around it; otherwise shows interactive section arrows.">Cut Section Box</button>
+
+        <select id="viewerHeatmapSelect" title="Color-code 3D elements by QA/QC Audit status. Hover options or see legend: Issues (Red=Critical failure, Amber=Warning, Gray=Pass) | Teams (Blue=AR, Purple=ID, Green=MEP, Orange=STR) | Diffs (Green=Added, Amber=Modified, Cyan=Moved)." style="width:225px;margin:0;padding:4px 8px;font-size:12px;background:#1e293b;color:#f8fafc;border-color:#334155">
+          <option value="">Heatmap / Audit Color...</option>
+          <option value="issues" title="Red = Critical IDS Issue (must fix before delivery), Amber = Warning, Gray = Passed">Heatmap: Issues (Red=Critical)</option>
+          <option value="teams" title="Blue = AR, Purple = ID, Green = MEP, Orange = STR">Heatmap: Teams (AR/ID/MEP/STR)</option>
+          <option value="diffs" title="Green = Added, Amber = Modified, Cyan = Moved/GeometryChanged">Heatmap: Version Diffs</option>
+          <option value="clear" title="Remove all heatmap colors and restore original materials">Clear Heatmap Colors</option>
+        </select>
+
+        <span class="chip-btn" style="cursor:help;background:#0f172a;color:#94a3b8;border-color:#334155" title="HEATMAP COLOR GUIDE:&#10;• Issues Mode: RED = Critical rule failure (missing/invalid required parameter), AMBER = Warning/Medium issue, GRAY = Passed.&#10;• Teams Mode: BLUE = Architecture (AR), PURPLE = Interior (ID), GREEN = MEP, ORANGE = Structure (STR).&#10;• Diffs Mode: GREEN = Added element, AMBER = Parameter modified, CYAN = Moved / Geometry changed.">? Legend</span>
+
+        <button type="button" class="chip-btn" id="btnSyncSpatialDiff" title="Compare 3D world positions & bounding boxes against previous version in warehouse.sqlite to detect Moved (>5mm) or Resized elements">Check 3D Geo-Diff</button>
+        <button type="button" class="chip-btn" id="btnReset3D" title="Clear all Section Boxes, Cut Planes, Isolation, Selection, Heatmap colors, and reset camera to 3D Isometric">Reset 3D</button>
       </div>
+
       <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-        <span style="font-size:11px;color:#5eead4;font-weight:600;text-transform:uppercase">Export from SVF2:</span>
-        <button type="button" class="chip-btn" id="btnOpenSheetSetModal" title="Browse 2D Drawing Sheets, download Native Vector Cloud PDFs, or compile a Multi-Page PDF Sheet Set">PDF Sheet Set</button>
-        <button type="button" class="chip-btn" id="btnExportSnapshotPng" title="Export high-res 2D/3D cropped view with Architect Coordination Titleblock (.PNG)">Crop Sheet (.PNG)</button>
-        <button type="button" class="chip-btn" id="btnExportMeshObj" title="Extract 3D triangulated mesh of visible/isolated elements directly from SVF2 to .OBJ (for SketchUp/Blender/Rhino/CAD)">3D Mesh (.OBJ)</button>
-        <button type="button" class="chip-btn" id="btnExportMeshGlb" title="Export true 3D Binary glTF 2.0 (.GLB) with element metadata for Offline Viewer, Power BI 3DBI, Blender & Three.js">3D Mesh (.GLB)</button>
-        <button type="button" class="chip-btn" id="btnExportRefIfc" title="Generate true-geometry IFC4 model (.IFC) with IfcTriangulatedFaceSet and SQLite PropertySets (for BlenderBIM/BIMcollab/FreeCAD)">Reference (.IFC)</button>
+        <select id="viewerExportSelect" title="Export 2D Sheets, Cloud Vector PDFs, Images, 3D Meshes (.OBJ/.GLB), or True-Geometry IFC4 directly from SVF2 without Revit." style="width:235px;margin:0;padding:4px 8px;font-size:12px;background:#042f2e;color:#5eead4;border-color:#0d9488;font-weight:600">
+          <option value="">Export / 2D Sheets from SVF2...</option>
+          <option value="sheets" title="Open 2D Drawing Sheets & Native Cloud Vector PDF Exporter (requires Revit Publish Settings for 2D sheets)">2D / PDF Sheet Set (Vector PDF &amp; A3)</option>
+          <option value="png" title="Export 1920x1080 cropped view stamped with Architect Coordination Titleblock (.PNG)">Crop Sheet Snapshot (.PNG)</option>
+          <option value="obj" title="Export 3D triangulated mesh (.OBJ) for SketchUp, Blender, Rhino, or AutoCAD">3D Mesh (.OBJ)</option>
+          <option value="glb" title="Export Binary glTF 2.0 (.GLB) with element dbId metadata for Offline Viewer, Power BI 3DBI, Blender">3D Binary glTF (.GLB — Offline/BI)</option>
+          <option value="ifc" title="Generate true-geometry IFC4 (.IFC) with IfcTriangulatedFaceSet and SQLite PropertySets">True-Geometry Reference (.IFC)</option>
+        </select>
       </div>
     </div>
 
@@ -2314,17 +2349,75 @@ function getCombinedModelBounds() {
   return box.isEmpty() ? null : box;
 }
 
+function computeAutoPerpendicularNormal() {
+  if (!apsViewer || typeof THREE === 'undefined') return null;
+
+  // 1. Check if user selected an object (e.g. an angled wall/facade)
+  const aggSel = typeof apsViewer.getAggregateSelection === 'function' ? apsViewer.getAggregateSelection() : [];
+  const sel = (aggSel || []).find(s => s.selection?.length);
+  const targetModel = sel?.model || apsViewer.model;
+  if (!targetModel) return null;
+
+  const sampleDbIds = [];
+  if (sel && sel.selection.length > 0) {
+    sampleDbIds.push(...sel.selection.slice(0, 12));
+  } else {
+    const tree = targetModel.getInstanceTree();
+    if (tree) {
+      tree.enumNodeChildren(tree.getRootId(), (id) => {
+        if (sampleDbIds.length < 180 && tree.getChildCount(id) === 0) sampleDbIds.push(id);
+      }, true);
+    }
+  }
+
+  // Histogram of horizontal face normals (0..179 deg) weighted by triangle area
+  const bins = new Float64Array(180);
+  const vA = new THREE.Vector3(), vB = new THREE.Vector3(), vC = new THREE.Vector3();
+  const cb = new THREE.Vector3(), ab = new THREE.Vector3();
+
+  for (const dbId of sampleDbIds) {
+    const { positions, indices } = extractSvf2ElementGeometry(dbId, targetModel);
+    for (let i = 0; i < indices.length; i += 3) {
+      const i0 = indices[i] * 3, i1 = indices[i + 1] * 3, i2 = indices[i + 2] * 3;
+      vA.set(positions[i0], positions[i0 + 1], positions[i0 + 2]);
+      vB.set(positions[i1], positions[i1 + 1], positions[i1 + 2]);
+      vC.set(positions[i2], positions[i2 + 1], positions[i2 + 2]);
+      cb.subVectors(vC, vB);
+      ab.subVectors(vA, vB);
+      cb.cross(ab); // face normal * 2*area
+
+      // Focus on vertical faces (walls/facades/columns) where XY component is significant
+      const xyLen = Math.hypot(cb.x, cb.y);
+      if (xyLen < 1e-4 || Math.abs(cb.z) > xyLen * 1.5) continue;
+
+      let deg = Math.round(Math.atan2(cb.y, cb.x) * 180 / Math.PI);
+      deg = ((deg % 180) + 180) % 180;
+      bins[deg] += xyLen;
+    }
+  }
+
+  let bestDeg = -1, bestWeight = 0;
+  for (let d = 0; d < 180; d++) {
+    if (bins[d] > bestWeight) { bestWeight = bins[d]; bestDeg = d; }
+  }
+  if (bestDeg < 0) return null;
+
+  const rad = bestDeg * Math.PI / 180;
+  return { dir: new THREE.Vector3(Math.cos(rad), Math.sin(rad), 0), angleDeg: bestDeg, fromSelection: Boolean(sel) };
+}
+
 function setViewerCameraPreset(mode) {
   if (!apsViewer || !apsViewer.navigation) return;
   const box = getCombinedModelBounds();
   const nav = apsViewer.navigation;
 
-  if (mode === 'top' || mode === 'front') {
-    if (typeof nav.toOrthographic === 'function') nav.toOrthographic();
-  } else {
+  if (mode === 'iso') {
     if (typeof nav.toPerspective === 'function') nav.toPerspective();
+  } else {
+    if (typeof nav.toOrthographic === 'function') nav.toOrthographic();
   }
 
+  let statusNote = '';
   if (box) {
     const center = new THREE.Vector3();
     const size = new THREE.Vector3();
@@ -2333,19 +2426,39 @@ function setViewerCameraPreset(mode) {
     const maxDim = Math.max(size.x, size.y, size.z, 10);
     const dist = maxDim * 1.6;
 
-    let eye, up;
+    let eye, up = new THREE.Vector3(0, 0, 1);
     if (mode === 'top') {
-      // Top Plan: look straight down -Z, North (+Y) up
       eye = new THREE.Vector3(center.x, center.y, center.z + dist);
       up = new THREE.Vector3(0, 1, 0);
+      statusNote = 'Camera: 2D Top Plan (Orthographic).';
     } else if (mode === 'front') {
-      // Front Elevation: look along +Y (from -Y towards +Y), Z up
       eye = new THREE.Vector3(center.x, center.y - dist, center.z);
-      up = new THREE.Vector3(0, 0, 1);
+      statusNote = 'Camera: Front Elevation (Orthographic).';
+    } else if (mode === 'rear') {
+      eye = new THREE.Vector3(center.x, center.y + dist, center.z);
+      statusNote = 'Camera: Rear / Back Elevation (Orthographic).';
+    } else if (mode === 'left') {
+      eye = new THREE.Vector3(center.x - dist, center.y, center.z);
+      statusNote = 'Camera: Left Side Elevation (Orthographic).';
+    } else if (mode === 'right') {
+      eye = new THREE.Vector3(center.x + dist, center.y, center.z);
+      statusNote = 'Camera: Right Side Elevation (Orthographic).';
+    } else if (mode === 'perp') {
+      const autoPerp = computeAutoPerpendicularNormal();
+      if (autoPerp) {
+        eye = new THREE.Vector3(
+          center.x + autoPerp.dir.x * dist,
+          center.y + autoPerp.dir.y * dist,
+          center.z
+        );
+        statusNote = `Camera: Auto-Aligned Perpendicular (${autoPerp.angleDeg}° from ${autoPerp.fromSelection ? 'selected element' : 'dominant model axis'}).`;
+      } else {
+        eye = new THREE.Vector3(center.x, center.y - dist, center.z);
+        statusNote = 'Camera: Aligned Perpendicular (Front default).';
+      }
     } else {
-      // 3D Isometric Perspective
       eye = new THREE.Vector3(center.x + dist * 0.75, center.y - dist * 0.75, center.z + dist * 0.65);
-      up = new THREE.Vector3(0, 0, 1);
+      statusNote = 'Camera: 3D Perspective Isometric.';
     }
 
     if (typeof nav.setCameraUpVector === 'function') nav.setCameraUpVector(up);
@@ -2355,7 +2468,8 @@ function setViewerCameraPreset(mode) {
   try {
     const vc = apsViewer.getExtension('Autodesk.ViewCubeUi');
     if (vc && typeof vc.setViewCube === 'function') {
-      vc.setViewCube(mode === 'top' ? 'top' : mode === 'front' ? 'front' : 'front top right');
+      const vcMap = { top: 'top', front: 'front', rear: 'back', left: 'left', right: 'right', iso: 'front top right' };
+      if (vcMap[mode]) vc.setViewCube(vcMap[mode]);
     }
   } catch { }
 
@@ -2365,21 +2479,12 @@ function setViewerCameraPreset(mode) {
   if (apsViewer.impl && typeof apsViewer.impl.invalidate === 'function') {
     apsViewer.impl.invalidate(true, true, true);
   }
+  if (statusNote) $('viewerStatusText').textContent = statusNote;
 }
 
-$('btnOrthoTop').onclick = () => {
-  setViewerCameraPreset('top');
-  $('viewerStatusText').textContent = 'Camera: 2D Top Plan (True-Scale Orthographic).';
-};
-
-$('btnOrthoFront').onclick = () => {
-  setViewerCameraPreset('front');
-  $('viewerStatusText').textContent = 'Camera: Front Elevation (True-Scale Orthographic).';
-};
-
-$('btnPersp3D').onclick = () => {
-  setViewerCameraPreset('iso');
-  $('viewerStatusText').textContent = 'Camera: 3D Perspective Isometric.';
+$('viewerCameraSelect').onchange = () => {
+  const mode = $('viewerCameraSelect').value;
+  setViewerCameraPreset(mode);
 };
 
 $('btnToggleSectionBox').onclick = async () => {
@@ -2412,10 +2517,27 @@ $('btnIsolateSelected3D').onclick = async () => {
   $('viewerStatusText').textContent = 'Isolated and sectioned selected element(s).';
 };
 
-$('btnExportSnapshotPng').onclick = exportAnnotatedSnapshotPng;
-$('btnExportMeshObj').onclick = exportVisibleMeshObj;
-$('btnExportMeshGlb').onclick = exportBinaryGlb;
-$('btnExportRefIfc').onclick = exportReferenceIfc;
+$('viewerExportSelect').onchange = async () => {
+  const mode = $('viewerExportSelect').value;
+  $('viewerExportSelect').value = '';
+  if (!mode) return;
+  if (mode === 'sheets') await openSheetSetModal();
+  else if (mode === 'png') exportAnnotatedSnapshotPng();
+  else if (mode === 'obj') exportVisibleMeshObj();
+  else if (mode === 'glb') exportBinaryGlb();
+  else if (mode === 'ifc') await exportReferenceIfc();
+};
+
+function applyThemeMode(isDark) {
+  document.body.classList.toggle('dark-theme', isDark);
+  $('btnThemeToggle').textContent = isDark ? 'Light Theme' : 'Dark Theme';
+  $('btnThemeToggle').classList.toggle('primary', isDark);
+  try { localStorage.setItem('rbde_theme', isDark ? 'dark' : 'light'); } catch { }
+}
+try {
+  if (localStorage.getItem('rbde_theme') === 'dark') applyThemeMode(true);
+} catch { }
+$('btnThemeToggle').onclick = () => applyThemeMode(!document.body.classList.contains('dark-theme'));
 
 $('btnExecutiveMode').onclick = () => {
   const active = document.body.classList.toggle('executive-mode');
@@ -2756,7 +2878,6 @@ async function openSheetSetModal() {
 }
 
 $('btnHeaderSheetSet').onclick = openSheetSetModal;
-$('btnOpenSheetSetModal').onclick = openSheetSetModal;
 $('closeSheetSetModal').onclick = () => $('sheetSetModal').close();
 $('btnSelectAllSheets').onclick = () => document.querySelectorAll('.sheet-set-cb').forEach(cb => cb.checked = true);
 $('btnClearAllSheets').onclick = () => document.querySelectorAll('.sheet-set-cb').forEach(cb => cb.checked = false);
@@ -3016,9 +3137,16 @@ document.querySelectorAll('.tg-quick-cmd').forEach(btn => {
   };
 });
 
-$('btnColorIssues').onclick = () => apply3DHeatmap('issues');
-$('btnColorTeams').onclick = () => apply3DHeatmap('teams');
-$('btnColorDiffs').onclick = () => apply3DHeatmap('diffs');
+$('viewerHeatmapSelect').onchange = () => {
+  const mode = $('viewerHeatmapSelect').value;
+  if (!mode) return;
+  if (mode === 'clear') {
+    for (const m of getAllLoadedViewerModels()) apsViewer?.clearThemingColors(m);
+    $('viewerStatusText').textContent = 'Cleared 3D Heatmap colors.';
+  } else {
+    apply3DHeatmap(mode);
+  }
+};
 $('btnReset3D').onclick = async () => {
   if (!apsViewer || !apsViewer.model) return;
   try {
@@ -3028,6 +3156,8 @@ $('btnReset3D').onclick = async () => {
   if (typeof apsViewer.setCutPlanes === 'function') apsViewer.setCutPlanes([]);
   sectionBoxActive = false;
   $('viewerLevelCutSelect').value = '';
+  $('viewerHeatmapSelect').value = '';
+  $('viewerCameraSelect').value = 'iso';
   for (const m of getAllLoadedViewerModels()) {
     apsViewer.clearThemingColors(m);
     apsViewer.isolate([], m);
@@ -3246,7 +3376,8 @@ $('exportAll').onclick=async()=>{
       }
     }
     const has3DModels=$('viewerModelSelect').options.length>0;
-    for(const id of ['btnToggle3DViewer','btnHeaderSheetSet','btnOpenSheetSetModal']){
+    for(const id of ['btnToggle3DViewer','btnHeaderSheetSet','viewerExportSelect']){
+      if(!$(id)) continue;
       $(id).disabled=!has3DModels;
       if(!has3DModels)$(id).title='No published 2D/3D derivative in this run. Extract an ACC model with a published view first.';
     }

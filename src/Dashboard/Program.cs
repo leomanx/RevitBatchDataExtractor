@@ -705,6 +705,26 @@ while (listener.IsListening)
                 var sheets2d = new List<object>();
                 var views3d = new List<object>();
 
+                string? FindNestedPdfUrn(JsonElement el)
+                {
+                    if (el.TryGetProperty("children", out var chArr) && chArr.ValueKind == JsonValueKind.Array)
+                    {
+                        foreach (var ch in chArr.EnumerateArray())
+                        {
+                            var cr = ch.TryGetProperty("role", out var crp) ? crp.GetString() ?? "" : "";
+                            var cm = ch.TryGetProperty("mime", out var cmp) ? cmp.GetString() ?? "" : "";
+                            if (cr == "pdf-page" || cm == "application/pdf")
+                            {
+                                var u = ch.TryGetProperty("urn", out var cu) ? cu.GetString() : null;
+                                if (!string.IsNullOrEmpty(u)) return u;
+                            }
+                            var deeper = FindNestedPdfUrn(ch);
+                            if (!string.IsNullOrEmpty(deeper)) return deeper;
+                        }
+                    }
+                    return null;
+                }
+
                 void WalkNode(JsonElement node)
                 {
                     var type = node.TryGetProperty("type", out var t) ? t.GetString() ?? "" : "";
@@ -714,21 +734,7 @@ while (listener.IsListening)
                         var name = node.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "";
                         var guid = node.TryGetProperty("guid", out var g) ? g.GetString() ?? "" : "";
                         var viewId = node.TryGetProperty("viewableID", out var vid) ? vid.GetString() ?? "" : "";
-                        string? pdfDerivUrn = null;
-
-                        if (node.TryGetProperty("children", out var chArr) && chArr.ValueKind == JsonValueKind.Array)
-                        {
-                            foreach (var ch in chArr.EnumerateArray())
-                            {
-                                var chRole = ch.TryGetProperty("role", out var cr) ? cr.GetString() ?? "" : "";
-                                var chMime = ch.TryGetProperty("mime", out var cm) ? cm.GetString() ?? "" : "";
-                                if (chRole == "pdf-page" || chMime == "application/pdf")
-                                {
-                                    pdfDerivUrn = ch.TryGetProperty("urn", out var cu) ? cu.GetString() : null;
-                                    break;
-                                }
-                            }
-                        }
+                        string? pdfDerivUrn = FindNestedPdfUrn(node);
 
                         var item = new { name, guid, viewableId = viewId, role, hasNativePdf = !string.IsNullOrEmpty(pdfDerivUrn), pdfUrn = pdfDerivUrn ?? "" };
                         if (role == "2d") sheets2d.Add(item);
